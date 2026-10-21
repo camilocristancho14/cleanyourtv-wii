@@ -173,6 +173,7 @@ public class AlexaBridgeService extends Service {
             sinric = new SinricClient(cfg.sinricKey, cfg.sinricSecret, cfg.sinricDevice,
                     id != null && !id.isEmpty() ? id : "tvhome", this::sinricRequest);
             sinric.start();
+            exec.execute(() -> channels(new HashMap<>()));
         }
         return START_STICKY;
     }
@@ -298,6 +299,8 @@ public class AlexaBridgeService extends Service {
                 case "media": media(args.getString("key")); break;
                 case "launch": launch(args.getString("package")); break;
                 case "channel_skip": channelSkip(args.getInt("delta")); break;
+                case "channel": changeChannel(new JSONObject().put("name", args.optString("name"))
+                        .put("number", args.optString("number"))); break;
                 case "key": key(args.getInt("keycode")); break;
                 case "publish_apps": publishApps(); break;
                 default: return;
@@ -454,24 +457,54 @@ public class AlexaBridgeService extends Service {
             }
             case "skipChannels": {
                 int count = v.getInt("channelCount");
+                if (lastChannel > 0) {
+                    Map<Integer, String> map = channels(new HashMap<>());
+                    int n = ChannelMap.step(map, lastChannel, count);
+                    if (n > 0 && openChannel(map, n)) {
+                        return SinricClient.Result.ok(new JSONObject().put("channelCount", count));
+                    }
+                }
                 channelSkip(count);
                 return SinricClient.Result.ok(new JSONObject().put("channelCount", count));
             }
-            case "changeChannel":
-                return changeChannel(v.optJSONObject("channel"));
+            case "changeChannel": {
+                JSONObject channel = v.optJSONObject("channel");
+                if (channel == null) channel = new JSONObject();
+                // Some requests carry the number at the top level instead of inside "channel".
+                if (channel.optString("number").isEmpty()) {
+                    String n = v.optString("channelNumber", v.optString("number"));
+                    if (!n.isEmpty()) channel.put("number", n);
+                }
+                return changeChannel(channel);
+            }
             default:
                 return SinricClient.Result.fail("Unsupported action");
         }
     }
 
+    /** Last app channel opened by number, for SkipChannels; 0 when none. */
+    private volatile int lastChannel;
+
+    /**
+     * Number first (Alexa keeps app names for itself, so "canal uno" is the way to Netflix): channelNumber, or a
+     * name that is a number ("1", "uno"). Then the name fuzzy-matched to app labels. Then digit keys for live TV.
+     */
     private SinricClient.Result changeChannel(JSONObject channel) throws org.json.JSONException {
         String name = channel == null ? "" : channel.optString("name").trim();
         String number = channel == null ? "" : channel.optString("number").trim();
+        Map<String, String> labels = new HashMap<>();
+        Map<Integer, String> map = channels(labels);
+        int n = ChannelMap.parseNumber(number);
+        if (n < 0) n = ChannelMap.parseNumber(name);
+        Log.i(TAG, "channel request number=" + number + " name=" + name + " -> " + n);
+        if (n > 0 && openChannel(map, n)) {
+            return SinricClient.Result.ok(new JSONObject()
+                    .put("channel", new JSONObject().put("name", labels.get(map.get(n)))));
+        }
         if (!name.isEmpty()) {
-            Map<String, String> labels = new HashMap<>();
-            scanApps(labels, new HashMap<>());
             String pkg = AppMatch.resolve(labels, name);
             if (pkg != null && launch(pkg)) {
+                Log.i(TAG, "channel by name -> " + pkg);
                 return SinricClient.Result.ok(new JSONObject()
                         .put("channel", new JSONObject().put("name", labels.get(pkg))));
             }
@@ -482,6 +515,61 @@ public class AlexaBridgeService extends Service {
                     .put("channel", new JSONObject().put("number", number)));
         }
         return SinricClient.Result.fail("No app");
+    }
+
+    private boolean openChannel(Map<Integer, String> map, int n) {
+        String pkg = map.get(n);
+        if (pkg == null || !launch(pkg)) return false;
+        lastChannel = n;
+        Log.i(TAG, "channel " + n + " -> " + pkg);
+        return true;
+    }
+
+    /**
+     * The channel map, refreshed against installed apps and written to channels.txt in the external files dir
+     * (next to alexa.properties). Fills labels for every launchable app.
+     */
+    private synchronized Map<Integer, String> channels(Map<String, String> labels) {
+        scanApps(labels, new HashMap<>());
+        labels.remove(getPackageName());
+        PackageManager pm = getPackageManager();
+        List<String> ordered = new ArrayList<>(labels.keySet());
+        Map<String, Integer> rank = new HashMap<>();
+        for (String pkg : ordered) {
+            int category = -1;
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= 26) category = pm.getApplicationInfo(pkg, 0).category;
+            } catch (PackageManager.NameNotFoundException ignored) {
+            }
+            rank.put(pkg, WiiOrder.rank(pkg, category));
+        }
+        Collections.sort(ordered, (a, b) -> {
+            int r = Integer.compare(rank.get(a), rank.get(b));
+            if (r != 0) return r;
+            int byLabel = labels.get(a).compareToIgnoreCase(labels.get(b));
+            return byLabel != 0 ? byLabel : a.compareTo(b);
+        });
+        java.io.File dir = getExternalFilesDir(null);
+        java.io.File file = dir == null ? null : new java.io.File(dir, ChannelMap.FILE_NAME);
+        String old = null;
+        if (file != null && file.exists()) {
+            try {
+                old = new String(java.nio.file.Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8);
+            } catch (Exception e) {
+                Log.w(TAG, "channels read: " + e.getClass().getSimpleName());
+            }
+        }
+        Map<Integer, String> map = ChannelMap.assign(ChannelMap.decode(old), ordered);
+        String text = ChannelMap.encode(map, labels);
+        if (file != null && !text.equals(old)) {
+            try (java.io.FileOutputStream out = new java.io.FileOutputStream(file)) {
+                out.write(text.getBytes(StandardCharsets.UTF_8));
+                Log.i(TAG, "channels.txt written: " + map.size() + " apps");
+            } catch (Exception e) {
+                Log.w(TAG, "channels write: " + e.getClass().getSimpleName());
+            }
+        }
+        return map;
     }
 
     // ---- state ----
