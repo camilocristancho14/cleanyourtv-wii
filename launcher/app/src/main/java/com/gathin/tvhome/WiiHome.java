@@ -51,6 +51,8 @@ import java.util.regex.Pattern;
 final class WiiHome {
     static final int ROWS = WiiViews.Strip.ROWS, VISIBLE_COLS = WiiViews.Strip.VISIBLE_COLS;
     private static final int SCROLL_MS = 300, HAND_MS = 150;
+    /** Width over height of the cursor drawables (same viewport for the open hand and the fist). */
+    private static final float HAND_ASPECT = 34.88f / 49.38f;
     private static final String FILE_MANAGER = "com.alphainventor.filemanager";
     private static final String HDMI_SERVICE = "com.mediatek.tis/.HdmiInputService/";
     private static final String[] DAYS = {"Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"};
@@ -113,7 +115,7 @@ final class WiiHome {
         // The cursor is the last child of the frame: nothing the strip scales or lifts can draw over it.
         hand = WiiViews.newHand(act);
         float hh = screenH * 0.115f;
-        frame.addView(hand, new FrameLayout.LayoutParams(Math.round(hh * 40f / 44f), Math.round(hh)));
+        frame.addView(hand, new FrameLayout.LayoutParams(Math.round(hh * HAND_ASPECT), Math.round(hh)));
         packageFilter.addAction(Intent.ACTION_PACKAGE_ADDED);
         packageFilter.addAction(Intent.ACTION_PACKAGE_REMOVED);
         packageFilter.addAction(Intent.ACTION_PACKAGE_REPLACED);
@@ -579,10 +581,14 @@ final class WiiHome {
         }
         float x = now.getLeft() + now.getWidth() * 0.60f;
         float y = now.getTop() + now.getHeight() * 0.50f;
+        // Where the hand's own aim point (fingertip, or the middle of the fist) lands relative to the tile point.
+        float hh = hand.getLayoutParams().height, ww = hand.getLayoutParams().width;
         if (holding() && onTile) {
-            // The fist has no pointing finger: its middle sits where the fingertip would.
-            x -= hand.getLayoutParams().width * 4.5f / 40f;
-            y -= hand.getLayoutParams().height * 10f / 44f;
+            x += 0.477f * hh - 0.525f * ww;
+            y += 0.272f * hh - 0.425f * hh;
+        } else {
+            x += 0.375f * hh - 0.264f * ww;
+            y += 0.045f * hh - 0.030f * hh;
         }
         if (onTile) {
             x += strip.getLeft() - scrollCol * (float) strip.pitch;
