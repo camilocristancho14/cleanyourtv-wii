@@ -3,7 +3,8 @@
 Lets a cloud function (an Alexa skill's Lambda) control the TV through [ntfy.sh](https://ntfy.sh), with no
 open port on your network. The launcher's `AlexaBridgeService` keeps one outgoing HTTPS stream open to a
 command topic, runs the signed commands it receives, and publishes the TV's state and app list to a second
-topic. It does nothing, and shows no notification, unless the config file below exists.
+topic. It can also connect to Sinric Pro instead (see below). It does nothing, and shows no notification,
+unless the config file below exists.
 
 ## Configure
 
@@ -33,6 +34,42 @@ Locations tried, in order:
 2. `/data/local/tmp/alexa.properties` (`adb push` can write it, but on most firmware apps cannot read that folder)
 
 If the launcher was installed with another `launcherApplicationId`, use that package name in the first path.
+
+## Sinric Pro (optional)
+
+The same service can also hold a [Sinric Pro](https://sinric.pro) connection, so Alexa's built-in smart-home
+skill controls the TV with no custom skill or Lambda. Create a TV device in Sinric Pro, then add its credentials
+to `alexa.properties` (placeholders; never commit real values):
+
+```
+SINRIC_APP_KEY=<app key from the Sinric Pro credentials page>
+SINRIC_APP_SECRET=<app secret from the same page>
+SINRIC_DEVICE_ID=<the TV device's id>
+```
+
+The client starts only when all three are present, and runs alongside the ntfy bridge. Either set of keys is
+enough on its own: a file with only the `SINRIC_*` lines runs just the Sinric client.
+
+It is a small RFC 6455 websocket client over TLS (no library, to keep the APK small) connecting to
+`wss://ws.sinric.pro:443/` with the app key and device id as headers. Every request and response carries an
+HMAC-SHA256 of the raw `payload` text keyed with `SINRIC_APP_SECRET`; requests with a bad signature are answered
+with `Signature is invalid` and never run. A ping goes out every 4 minutes (no pong in 10 s drops the
+connection) and reconnects back off from 1 s to 60 s. `adb logcat -s SinricPro` shows `connected`, each request's
+action name and disconnect reasons, never the keys or values.
+
+| Sinric action | Does |
+|---|---|
+| `setPowerState` `On`/`Off` | power-on wake lock / power-off path of the ntfy bridge |
+| `setVolume`, `adjustVolume` | media volume; `adjustVolume` with `volumeDefault` steps by 5; answers the new 0-100 volume |
+| `setMute` | mute / unmute |
+| `mediaControl` | `Play`, `Pause`, `Stop`, `Next`, `Previous`, `FastForward`, `Rewind` media keys |
+| `selectInput` | best effort: opens the Live TV app (`com.mediatek.tv.oneworld.tvcenter`) or presses the TV-input key |
+| `skipChannels` | channel up / down presses |
+| `changeChannel` | the channel *name* is read as an app: fuzzy match against installed launcher labels (accents, case and punctuation ignored, `+` is "plus"; accepted from 0.72 similarity), then a built-in alias table (`netflix`, `youtube`, `disney`, `hbo max`, `prime`, `live tv`, `settings`, ...) if that package is installed. A bare channel number sends digit keys. No match answers `No app` |
+
+After a successful `setVolume`, `setMute` or `setPowerState` the TV also sends a state event (at most one per
+second). The limits below apply here too: power on works only while the TV is awake, and launching from the
+background can be blocked.
 
 ## Start-up
 

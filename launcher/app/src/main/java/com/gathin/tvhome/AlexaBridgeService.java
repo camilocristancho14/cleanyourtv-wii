@@ -67,6 +67,15 @@ public class AlexaBridgeService extends Service {
 
     private static final class Cfg {
         String base, cmdTopic, stateTopic, secret;
+        String sinricKey, sinricSecret, sinricDevice;
+
+        boolean ntfy() {
+            return base != null;
+        }
+
+        boolean sinric() {
+            return sinricKey != null;
+        }
     }
 
     private Cfg cfg;
@@ -77,6 +86,7 @@ public class AlexaBridgeService extends Service {
     private ScheduledFuture<?> appsPublish;
     private final AlexaProtocol.ReplayGuard replay = new AlexaProtocol.ReplayGuard();
     private BroadcastReceiver packageReceiver;
+    private SinricClient sinric;
 
     /** Starts the bridge if a config file exists; safe to call repeatedly and from any process entry point. */
     static void start(Context ctx) {
@@ -106,14 +116,25 @@ public class AlexaBridgeService extends Service {
                 }
                 Map<String, String> env = AlexaProtocol.parseEnv(new String(bytes, 0, n, StandardCharsets.UTF_8));
                 Cfg c = new Cfg();
-                c.base = env.get("NTFY_BASE");
-                c.cmdTopic = env.get("CMD_TOPIC");
-                c.stateTopic = env.get("STATE_TOPIC");
-                c.secret = env.get("HMAC_SECRET");
-                if (c.base == null || c.cmdTopic == null || c.stateTopic == null || c.secret == null
-                        || c.base.isEmpty() || c.cmdTopic.isEmpty() || c.stateTopic.isEmpty() || c.secret.isEmpty()
-                        || !c.base.startsWith("http")) continue;
-                while (c.base.endsWith("/")) c.base = c.base.substring(0, c.base.length() - 1);
+                String base = env.get("NTFY_BASE"), cmd = env.get("CMD_TOPIC"), state = env.get("STATE_TOPIC"),
+                        secret = env.get("HMAC_SECRET");
+                if (base != null && cmd != null && state != null && secret != null && !cmd.isEmpty()
+                        && !state.isEmpty() && !secret.isEmpty() && base.startsWith("http")) {
+                    while (base.endsWith("/")) base = base.substring(0, base.length() - 1);
+                    c.base = base;
+                    c.cmdTopic = cmd;
+                    c.stateTopic = state;
+                    c.secret = secret;
+                }
+                String key = env.get("SINRIC_APP_KEY"), sinricSecret = env.get("SINRIC_APP_SECRET"),
+                        device = env.get("SINRIC_DEVICE_ID");
+                if (SinricClient.validToken(key) && SinricClient.validToken(device)
+                        && sinricSecret != null && !sinricSecret.isEmpty()) {
+                    c.sinricKey = key;
+                    c.sinricSecret = sinricSecret;
+                    c.sinricDevice = device;
+                }
+                if (!c.ntfy() && !c.sinric()) continue;
                 return c;
             } catch (Exception ignored) {
                 // Missing or unreadable (the /data/local/tmp path is usually not visible to apps): try the next.
@@ -139,11 +160,20 @@ public class AlexaBridgeService extends Service {
         }
         running = true;
         exec = Executors.newSingleThreadScheduledExecutor();
-        exec.scheduleWithFixedDelay(this::publishState, HEARTBEAT_MIN, HEARTBEAT_MIN, TimeUnit.MINUTES);
-        exec.execute(this::publishApps);
-        registerPackageReceiver();
-        reader = new Thread(this::readLoop, "alexa-bridge");
-        reader.start();
+        if (cfg.ntfy()) {
+            exec.scheduleWithFixedDelay(this::publishState, HEARTBEAT_MIN, HEARTBEAT_MIN, TimeUnit.MINUTES);
+            exec.execute(this::publishApps);
+            registerPackageReceiver();
+            reader = new Thread(this::readLoop, "alexa-bridge");
+            reader.start();
+        }
+        if (cfg.sinric()) {
+            String id = android.provider.Settings.Secure.getString(getContentResolver(),
+                    android.provider.Settings.Secure.ANDROID_ID);
+            sinric = new SinricClient(cfg.sinricKey, cfg.sinricSecret, cfg.sinricDevice,
+                    id != null && !id.isEmpty() ? id : "tvhome", this::sinricRequest);
+            sinric.start();
+        }
         return START_STICKY;
     }
 
@@ -154,6 +184,7 @@ public class AlexaBridgeService extends Service {
             unregisterReceiver(packageReceiver);
             packageReceiver = null;
         }
+        if (sinric != null) sinric.stop();
         HttpURLConnection c = conn;
         if (c != null) c.disconnect();
         if (reader != null) reader.interrupt();
@@ -315,11 +346,14 @@ public class AlexaBridgeService extends Service {
                 AudioManager.FLAG_SHOW_UI);
     }
 
-    private void volumeAdjust(int delta) {
+    /** Returns the new volume as 0-100. */
+    private int volumeAdjust(int delta) {
         AudioManager am = audio();
-        int max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
-        int target = am.getStreamVolume(AudioManager.STREAM_MUSIC) + AlexaProtocol.stepsForDelta(delta, max);
-        am.setStreamVolume(AudioManager.STREAM_MUSIC, Math.max(0, Math.min(max, target)), AudioManager.FLAG_SHOW_UI);
+        int max = Math.max(1, am.getStreamMaxVolume(AudioManager.STREAM_MUSIC));
+        int target = Math.max(0, Math.min(max,
+                am.getStreamVolume(AudioManager.STREAM_MUSIC) + AlexaProtocol.stepsForDelta(delta, max)));
+        am.setStreamVolume(AudioManager.STREAM_MUSIC, target, AudioManager.FLAG_SHOW_UI);
+        return Math.round(target * 100f / max);
     }
 
     private void mute(boolean mute) {
@@ -327,7 +361,7 @@ public class AlexaBridgeService extends Service {
                 mute ? AudioManager.ADJUST_MUTE : AudioManager.ADJUST_UNMUTE, AudioManager.FLAG_SHOW_UI);
     }
 
-    private void media(String name) {
+    private boolean media(String name) {
         int code;
         switch (name) {
             case "play": code = KeyEvent.KEYCODE_MEDIA_PLAY; break;
@@ -338,9 +372,10 @@ public class AlexaBridgeService extends Service {
             case "rewind": code = KeyEvent.KEYCODE_MEDIA_REWIND; break;
             case "fastforward": code = KeyEvent.KEYCODE_MEDIA_FAST_FORWARD; break;
             case "play_pause": code = KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE; break;
-            default: return;
+            default: return false;
         }
         sendKey(code);
+        return true;
     }
 
     private void channelSkip(int delta) {
@@ -360,26 +395,99 @@ public class AlexaBridgeService extends Service {
     }
 
     /** Tries the accessibility service's context first: it is exempt from background-start limits where this service is not. */
-    private void launch(String pkg) {
+    private boolean launch(String pkg) {
         PackageManager pm = getPackageManager();
         Intent open = pm.getLeanbackLaunchIntentForPackage(pkg);
         if (open == null) open = pm.getLaunchIntentForPackage(pkg);
-        if (open == null) return;
+        if (open == null) return false;
         open.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         AccessibilityService a11y = accessibility();
         if (a11y != null) {
             try {
                 a11y.startActivity(open);
-                return;
+                return true;
             } catch (RuntimeException ignored) {
             }
         }
         startActivity(open);
+        return true;
+    }
+
+    // ---- Sinric Pro requests ----
+
+    private static final String TV_CENTER = "com.mediatek.tv.oneworld.tvcenter";
+
+    private SinricClient.Result sinricRequest(String action, JSONObject v) throws Exception {
+        switch (action) {
+            case "setPowerState": {
+                String state = v.getString("state");
+                boolean on = "On".equalsIgnoreCase(state);
+                if (!on && !"Off".equalsIgnoreCase(state)) return SinricClient.Result.fail("Bad state");
+                if (on) powerOn();
+                else powerOff();
+                return SinricClient.Result.ok(new JSONObject().put("state", state));
+            }
+            case "setVolume": {
+                int level = v.getInt("volume");
+                volumeSet(level);
+                return SinricClient.Result.ok(new JSONObject().put("volume", level));
+            }
+            case "adjustVolume": {
+                int delta = v.getInt("volume");
+                if (v.optBoolean("volumeDefault")) delta = delta < 0 ? -5 : 5;
+                return SinricClient.Result.ok(new JSONObject().put("volume", volumeAdjust(delta)));
+            }
+            case "setMute": {
+                boolean mute = v.getBoolean("mute");
+                mute(mute);
+                return SinricClient.Result.ok(new JSONObject().put("mute", mute));
+            }
+            case "mediaControl": {
+                String control = v.getString("control");
+                if (!media(control.toLowerCase(java.util.Locale.ROOT))) return SinricClient.Result.fail("Unsupported control");
+                return SinricClient.Result.ok(new JSONObject().put("control", control));
+            }
+            case "selectInput": {
+                // No portable input switch for an app: open the TV app (its input picker) and press the TV-input key.
+                if (!launch(TV_CENTER)) sendKey(KeyEvent.KEYCODE_TV_INPUT);
+                return SinricClient.Result.ok(new JSONObject().put("input", v.optString("input")));
+            }
+            case "skipChannels": {
+                int count = v.getInt("channelCount");
+                channelSkip(count);
+                return SinricClient.Result.ok(new JSONObject().put("channelCount", count));
+            }
+            case "changeChannel":
+                return changeChannel(v.optJSONObject("channel"));
+            default:
+                return SinricClient.Result.fail("Unsupported action");
+        }
+    }
+
+    private SinricClient.Result changeChannel(JSONObject channel) throws org.json.JSONException {
+        String name = channel == null ? "" : channel.optString("name").trim();
+        String number = channel == null ? "" : channel.optString("number").trim();
+        if (!name.isEmpty()) {
+            Map<String, String> labels = new HashMap<>();
+            scanApps(labels, new HashMap<>());
+            String pkg = AppMatch.resolve(labels, name);
+            if (pkg != null && launch(pkg)) {
+                return SinricClient.Result.ok(new JSONObject()
+                        .put("channel", new JSONObject().put("name", labels.get(pkg))));
+            }
+        }
+        if (number.matches("[0-9]{1,6}")) {
+            for (char digit : number.toCharArray()) sendKey(KeyEvent.KEYCODE_0 + (digit - '0'));
+            return SinricClient.Result.ok(new JSONObject()
+                    .put("channel", new JSONObject().put("number", number)));
+        }
+        return SinricClient.Result.fail("No app");
     }
 
     // ---- state ----
 
     private void publishState() {
+        if (!cfg.ntfy()) return;
         try {
             AudioManager am = audio();
             int max = Math.max(1, am.getStreamMaxVolume(AudioManager.STREAM_MUSIC));
@@ -396,20 +504,26 @@ public class AlexaBridgeService extends Service {
         }
     }
 
+    /** Fills label and TV-launcher flag per package for every app with a TV or a phone launcher entry. */
+    private void scanApps(Map<String, String> labels, Map<String, Boolean> leanback) {
+        PackageManager pm = getPackageManager();
+        for (String category : new String[] {Intent.CATEGORY_LEANBACK_LAUNCHER, Intent.CATEGORY_LAUNCHER}) {
+            Intent query = new Intent(Intent.ACTION_MAIN).addCategory(category);
+            for (ResolveInfo ri : pm.queryIntentActivities(query, 0)) {
+                String pkg = ri.activityInfo.packageName;
+                if (labels.containsKey(pkg)) continue;
+                labels.put(pkg, String.valueOf(ri.loadLabel(pm)));
+                leanback.put(pkg, Intent.CATEGORY_LEANBACK_LAUNCHER.equals(category));
+            }
+        }
+    }
+
     private void publishApps() {
+        if (!cfg.ntfy()) return;
         try {
-            PackageManager pm = getPackageManager();
             Map<String, String> labels = new HashMap<>();
             Map<String, Boolean> leanback = new HashMap<>();
-            for (String category : new String[] {Intent.CATEGORY_LEANBACK_LAUNCHER, Intent.CATEGORY_LAUNCHER}) {
-                Intent query = new Intent(Intent.ACTION_MAIN).addCategory(category);
-                for (ResolveInfo ri : pm.queryIntentActivities(query, 0)) {
-                    String pkg = ri.activityInfo.packageName;
-                    if (labels.containsKey(pkg)) continue;
-                    labels.put(pkg, String.valueOf(ri.loadLabel(pm)));
-                    leanback.put(pkg, Intent.CATEGORY_LEANBACK_LAUNCHER.equals(category));
-                }
-            }
+            scanApps(labels, leanback);
             List<String> pkgs = new ArrayList<>(labels.keySet());
             Collections.sort(pkgs, (a, b) -> {
                 int byLabel = labels.get(a).compareToIgnoreCase(labels.get(b));
