@@ -44,7 +44,8 @@ import java.util.regex.Pattern;
 
 /**
  * The Nintendo Wii menu (config wii_style): the channels in pages of 4 columns by 3 rows (12 apps) that slide
- * sideways one page at a time, a curved bar with the clock, the wiiOS (Settings), SD (file manager) and envelope (Entradas) buttons.
+ * sideways one page at a time, a curved tray with the clock, the wiiOS (Settings), SD (file manager) and Entradas (inputs) buttons.
+ * Dark from 16:00 to 07:00 (WiiTime), switched live on the minute tick.
  * It lives inside MainActivity, so the launcher is still the one HOME activity. D-pad navigation is explicit,
  * not left to focus search.
  */
@@ -55,7 +56,6 @@ final class WiiHome {
     private static final float HAND_ASPECT = 34.88f / 49.38f;
     private static final String FILE_MANAGER = "com.alphainventor.filemanager";
     private static final String HDMI_SERVICE = "com.mediatek.tis/.HdmiInputService/";
-    private static final String[] DAYS = {"Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"};
 
     private final MainActivity act;
     private final AppAdapter apps;
@@ -361,11 +361,23 @@ final class WiiHome {
         else arrow.setAlpha(alpha);
     }
 
+    /** Every minute (TIME_TICK), and on start and resume: the clock, the date, and dark or light (WiiTime). */
     private void updateClock() {
         Calendar now = Calendar.getInstance();
         root.clock.setTime(now.get(Calendar.HOUR_OF_DAY), now.get(Calendar.MINUTE), DateFormat.is24HourFormat(act));
-        root.date.setText(DAYS[now.get(Calendar.DAY_OF_WEEK) - 1] + " " + now.get(Calendar.DAY_OF_MONTH)
-                + "/" + (now.get(Calendar.MONTH) + 1));
+        root.date.setText(WiiTime.date(now.get(Calendar.DAY_OF_WEEK), now.get(Calendar.DAY_OF_MONTH),
+                now.get(Calendar.MONTH) + 1));
+        setNight(WiiTime.isNightNow());
+    }
+
+    /** Re-colours the whole Wii screen live when the look flips; an open Entradas dialog is rebuilt in the new colours. */
+    private void setNight(boolean dark) {
+        if (root.isDark() == dark) return;
+        root.setDark(dark);
+        if (dialog != null) {
+            closeDialog(false);
+            showEntradas();
+        }
     }
 
     // ---- scrolling -------------------------------------------------------------------------------
@@ -423,7 +435,7 @@ final class WiiHome {
 
     private View nearestControl(float x) {
         View best = root.os;
-        for (View c : new View[] {root.sd, root.mail}) {
+        for (View c : new View[] {root.sd, root.inputs}) {
             if (Math.abs(centerX(c) - x) < Math.abs(centerX(best) - x)) best = c;
         }
         return best;
@@ -497,11 +509,11 @@ final class WiiHome {
         switch (keyCode) {
             case KeyEvent.KEYCODE_DPAD_LEFT:
                 if (v == root.sd) root.os.requestFocus();
-                else if (v == root.mail) root.sd.requestFocus();
+                else if (v == root.inputs) root.sd.requestFocus();
                 return true;
             case KeyEvent.KEYCODE_DPAD_RIGHT:
                 if (v == root.os) root.sd.requestFocus();
-                else if (v == root.sd) root.mail.requestFocus();
+                else if (v == root.sd) root.inputs.requestFocus();
                 return true;
             case KeyEvent.KEYCODE_DPAD_UP:
                 upFromBar(v);
@@ -525,7 +537,7 @@ final class WiiHome {
         };
         root.os.setOnKeyListener(bar);
         root.sd.setOnKeyListener(bar);
-        root.mail.setOnKeyListener(bar);
+        root.inputs.setOnKeyListener(bar);
         root.os.setOnClickListener(v -> {
             confirmSound();
             act.open(act.systemIntent(android.provider.Settings.ACTION_SETTINGS));
@@ -538,7 +550,7 @@ final class WiiHome {
             confirmSound();
             openFileManager();
         });
-        root.mail.setOnClickListener(v -> {
+        root.inputs.setOnClickListener(v -> {
             confirmSound();
             showEntradas();
         });
@@ -712,15 +724,16 @@ final class WiiHome {
         final Intent live = liveTv();
 
         dialog = new FrameLayout(act);
-        dialog.setBackgroundColor(0x78F2F4F6);
+        WiiViews.Palette pal = root.look.p;
+        dialog.setBackgroundColor(pal.scrim);
         dialog.setOnClickListener(v -> closeDialog(true));
         LinearLayout panel = new LinearLayout(act);
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setClickable(true);
         GradientDrawable glass = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[] {0xE6FFFFFF, 0xD9E4E8EB});
+                new int[] {pal.panelTop, pal.panelBottom});
         glass.setCornerRadius(34 * u);
-        glass.setStroke(Math.max(2, Math.round(3 * u)), 0xFFB3D5E6);
+        glass.setStroke(Math.max(2, Math.round(3 * u)), pal.panelEdge);
         panel.setBackground(glass);
         int pad = (int) (30 * u);
         panel.setPadding(pad, (int) (22 * u), pad, pad);
@@ -728,7 +741,7 @@ final class WiiHome {
         title.setText(R.string.inputs);
         title.setTypeface(root.font);
         title.getPaint().setFakeBoldText(true);
-        title.setTextColor(WiiViews.GRAY_TEXT);
+        title.setTextColor(pal.text);
         title.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, 44 * u);
         title.setGravity(Gravity.CENTER);
         title.setPadding(0, 0, 0, (int) (10 * u));
@@ -764,7 +777,7 @@ final class WiiHome {
     }
 
     private WiiViews.Pill pill(LinearLayout panel, String text, final Runnable action) {
-        WiiViews.Pill p = new WiiViews.Pill(act, u, root.font);
+        WiiViews.Pill p = new WiiViews.Pill(act, u, root.font, root.look);
         p.setText(text);
         p.setOnClickListener(v -> {
             confirmSound();
@@ -781,6 +794,6 @@ final class WiiHome {
         frame.removeView(dialog);
         dialog = null;
         root.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
-        if (refocus) root.mail.requestFocus();
+        if (refocus) root.inputs.requestFocus();
     }
 }

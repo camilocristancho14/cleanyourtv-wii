@@ -451,6 +451,23 @@ tools/tv.py 'settings put secure screensaver_components com.gathin.tvhome/.Clock
 </details>
 
 <details>
+<summary><b>Wii menu: dark mode and the Wii Menu screensaver</b></summary>
+
+- The Wii menu (`wii_style`) turns dark by itself from 16:00 to 07:00 in the TV's time zone and light again
+  at 07:00. It checks on every minute tick and when Home comes back, and re-colours in place.
+- To try either look without touching the clock: `adb shell setprop debug.wiitv.night 1` (dark) or `0`
+  (light); `adb shell setprop debug.wiitv.night ""` goes back to automatic. It applies within a minute, or at once
+  when Home is reopened. The property is not kept across reboots.
+- "Wii Menu" screensaver (`WiiDream`): the Wii backdrop (dark at night) with the seven-segment clock and
+  the date gliding slowly around, dimmed; any key wakes the TV. The Clock screensaver is still there.
+
+```bash
+tools/tv.py 'settings put secure screensaver_components com.gathin.tvhome/.WiiDream; settings put secure screensaver_enabled 1'
+```
+
+</details>
+
+<details>
 <summary><b>Remote keys</b></summary>
 
 - An optional accessibility service keeps the remote's **Input** button working on Google TV
