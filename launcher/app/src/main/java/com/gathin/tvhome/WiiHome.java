@@ -1,10 +1,12 @@
 package com.gathin.tvhome;
 
 import android.content.BroadcastReceiver;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -13,6 +15,8 @@ import android.media.tv.TvContract;
 import android.media.tv.TvInputInfo;
 import android.media.tv.TvInputManager;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.format.DateFormat;
 import android.view.Gravity;
 import android.view.KeyEvent;
@@ -64,6 +68,16 @@ final class WiiHome {
     /** First column of the page the strip is scrolled to (or heading to). */
     private int scrollCol;
     private String lastKey;
+    private static final int RELOAD_DELAY_MS = 250;
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private final Runnable reloadTask = this::reload;
+    /** The committed layout (tile key per slot, null = empty slot) and what the strip shows now (the same, or a move preview). */
+    private List<String> layout = new ArrayList<>(), shown = layout;
+    /** The tile picked up for rearranging: its key, where it came from and the slot it hovers over. */
+    private String heldKey;
+    private int heldOrigin, heldAt;
+    /** The key-up that ends the long press which picked the tile up must not drop it. */
+    private boolean ignoreUp, pendingReload;
 
     private final IntentFilter packageFilter = new IntentFilter();
     private final BroadcastReceiver packageReceiver = new BroadcastReceiver() {
@@ -71,7 +85,9 @@ final class WiiHome {
         public void onReceive(Context context, Intent intent) {
             if (Intent.ACTION_PACKAGE_REMOVED.equals(intent.getAction())
                     && intent.getBooleanExtra(Intent.EXTRA_REPLACING, false)) return;
-            reload();
+            // An install or update sends several broadcasts in a row: one reload for the lot.
+            handler.removeCallbacks(reloadTask);
+            handler.postDelayed(reloadTask, RELOAD_DELAY_MS);
         }
     };
     private final IntentFilter timeFilter = new IntentFilter();
@@ -100,12 +116,13 @@ final class WiiHome {
         frame.addView(hand, new FrameLayout.LayoutParams(Math.round(hh * 40f / 44f), Math.round(hh)));
         packageFilter.addAction(Intent.ACTION_PACKAGE_ADDED);
         packageFilter.addAction(Intent.ACTION_PACKAGE_REMOVED);
+        packageFilter.addAction(Intent.ACTION_PACKAGE_REPLACED);
         packageFilter.addDataScheme("package");
         timeFilter.addAction(Intent.ACTION_TIME_TICK);
         timeFilter.addAction(Intent.ACTION_TIME_CHANGED);
         timeFilter.addAction(Intent.ACTION_TIMEZONE_CHANGED);
         wire();
-        bindStrip();
+        bindStrip(layout);
         frame.getViewTreeObserver().addOnGlobalFocusChangeListener(this::onFocusChanged);
         root.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> placeHand(frame.findFocus(), false, HAND_MS));
     }
@@ -137,10 +154,13 @@ final class WiiHome {
     }
 
     void onPause() {
+        dropHeld();
         closeDialog(false);
     }
 
     void onStop() {
+        dropHeld();
+        handler.removeCallbacks(reloadTask);
         started = false;
         dirty = true;
         act.unregisterReceiver(packageReceiver);
@@ -150,33 +170,58 @@ final class WiiHome {
     }
 
     void onHome() {
+        dropHeld();
         closeDialog(false);
         lastKey = null;
-        bindStrip();
+        bindStrip(layout);
         showColumn(0, true);
         focusSlot(0);
     }
 
     void onBack() {
+        if (holding()) {
+            dropHeld();
+            return;
+        }
         closeDialog(true);
     }
 
     // ---- apps ------------------------------------------------------------------------------------
 
-    private void reload() {
-        View focused = frame.findFocus();
-        for (int i = 0; i < strip.tiles.size(); i++) {
-            if (strip.tiles.get(i) == focused && !strip.tiles.get(i).isEmpty()) lastKey = apps.keyAt(i);
+    private List<String> defaultKeys() {
+        List<String> keys = new ArrayList<>();
+        for (int i = 0; i < apps.appCount(); i++) keys.add(apps.keyAt(i));
+        return keys;
+    }
+
+    private boolean installed(String key) {
+        ComponentName cn = ComponentName.unflattenFromString(key);
+        if (cn == null) return false;
+        try {
+            act.getPackageManager().getPackageInfo(cn.getPackageName(), 0);
+            return true;
+        } catch (PackageManager.NameNotFoundException e) {
+            return false;
         }
+    }
+
+    private void reload() {
+        if (holding()) {
+            pendingReload = true;
+            return;
+        }
+        View focused = frame.findFocus();
+        int focusedSlot = strip.tiles.indexOf(focused);
+        if (focusedSlot >= 0 && focusedSlot < layout.size() && layout.get(focusedSlot) != null) lastKey = layout.get(focusedSlot);
         final List<ResolveInfo> leanback = act.getPackageManager().queryIntentActivities(
                 new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER), 0);
         apps.reload(Collections.<Cards.Card>emptyList(), leanback);
         dirty = false;
-        int at = -1;
-        for (int i = 0; lastKey != null && i < apps.appCount(); i++) {
-            if (lastKey.equals(apps.keyAt(i))) at = i;
-        }
-        bindStrip();
+        List<String> saved = WiiLayout.load(act);
+        layout = WiiLayout.arrange(defaultKeys(), saved, this::installed);
+        if (saved != null && !layout.equals(saved)) WiiLayout.save(act, layout);
+        int at = lastKey == null ? -1 : layout.indexOf(lastKey);
+        bindStrip(layout);
         if (at >= 0) showColumn(at / ROWS, false);
         if (dialog == null && (focused != null || at >= 0 || frame.findFocus() == null)) {
             final int slot = at >= 0 ? at : 0;
@@ -184,32 +229,121 @@ final class WiiHome {
         }
     }
 
-    /** One slot per app; the last page is padded with empty slots to a full 12, then bound. */
-    private void bindStrip() {
-        int n = apps.appCount();
-        strip.setCount(WiiPages.slots(n));
-        for (int i = 0; i < strip.tiles.size(); i++) {
-            WiiViews.Tile tile = strip.tiles.get(i);
-            if (i < n) {
-                final AppAdapter.Entry e = apps.entryAt(i);
-                tile.bindApp(e);
-                tile.setOnClickListener(v -> {
-                    lastKey = apps.keyAt(strip.tiles.indexOf(v));
-                    if (sounds != null) sounds.confirm();
-                    apps.launch(e);
-                });
-                final int slot = i;
-                tile.setOnKeyListener((v, keyCode, event) -> {
-                    if (!isDpad(keyCode)) return false;
-                    return event.getAction() != KeyEvent.ACTION_DOWN || onTileKey(slot, keyCode);
-                });
-            } else {
-                tile.bindEmpty();
-                tile.setOnKeyListener(null);
-            }
-        }
+    private boolean holding() {
+        return heldKey != null;
+    }
+
+    /** One tile per slot; the last page is padded with empty slots to a full 12. */
+    private void bindStrip(List<String> slots) {
+        shown = slots;
+        strip.setCount(WiiPages.slots(slots.size() + (holding() ? 1 : 0)));
+        for (int i = 0; i < strip.tiles.size(); i++) bindSlot(i);
         showColumn(scrollCol, false);
         strip.requestLayout();
+    }
+
+    private void bindSlot(final int slot) {
+        WiiViews.Tile tile = strip.tiles.get(slot);
+        final String key = slot < shown.size() ? shown.get(slot) : null;
+        int at = apps.positionOf(key);
+        if (at < 0) {
+            tile.bindEmpty();
+            tile.setOnKeyListener(null);
+            return;
+        }
+        final AppAdapter.Entry e = apps.entryAt(at);
+        tile.bindApp(e);
+        tile.setOnClickListener(v -> {
+            lastKey = key;
+            if (sounds != null) sounds.confirm();
+            apps.launch(e);
+        });
+        tile.setOnLongClickListener(v -> pickUp(slot));
+        tile.setOnKeyListener((v, keyCode, event) -> {
+            if (holding()) return onHeldKey(keyCode, event);
+            if (!isDpad(keyCode)) return false;
+            return event.getAction() != KeyEvent.ACTION_DOWN || onTileKey(slot, keyCode);
+        });
+    }
+
+    // ---- rearranging -----------------------------------------------------------------------------
+
+    private boolean pickUp(int slot) {
+        if (holding() || dialog != null || slot >= layout.size() || layout.get(slot) == null) return true;
+        heldKey = layout.get(slot);
+        heldOrigin = heldAt = slot;
+        ignoreUp = true;
+        hand.setImageResource(R.drawable.ic_wii_hand_grab);
+        strip.setCount(Math.max(strip.tiles.size(), WiiPages.slots(layout.size() + 1)));
+        showColumn(scrollCol, false);
+        strip.tiles.get(slot).setHeld(true);
+        if (sounds != null) sounds.confirm();
+        placeHand(frame.findFocus(), true, HAND_MS);
+        return true;
+    }
+
+    private boolean onHeldKey(int keyCode, KeyEvent event) {
+        boolean down = event.getAction() == KeyEvent.ACTION_DOWN;
+        if (isDpad(keyCode)) {
+            if (down) moveHeld(keyCode);
+            return true;
+        }
+        if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER
+                || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+            if (!down) {
+                if (ignoreUp) ignoreUp = false;
+                else dropHeld();
+            }
+            return true;
+        }
+        return false;
+    }
+
+    private void moveHeld(int keyCode) {
+        int to = heldAt;
+        switch (keyCode) {
+            case KeyEvent.KEYCODE_DPAD_LEFT: to -= ROWS; break;
+            case KeyEvent.KEYCODE_DPAD_RIGHT: to += ROWS; break;
+            case KeyEvent.KEYCODE_DPAD_UP: if (to % ROWS > 0) to--; break;
+            case KeyEvent.KEYCODE_DPAD_DOWN: if (to % ROWS < ROWS - 1) to++; break;
+            default: break;
+        }
+        if (to < 0 || to == heldAt || to >= WiiPages.slots(layout.size() + 1)) return;
+        heldAt = to;
+        shown = WiiLayout.move(layout, heldOrigin, to);
+        strip.setCount(Math.max(strip.tiles.size(), WiiPages.slots(layout.size() + 1)));
+        // The tile under the hand is bound and focused first, so the focus never lands on a slot about to empty.
+        bindSlot(to);
+        strip.tiles.get(to).requestFocus();
+        for (int i = 0; i < strip.tiles.size(); i++) if (i != to) bindSlot(i);
+        strip.tiles.get(to).setHeld(true);
+    }
+
+    /** Puts the held tile down: it swaps with the tile there, or takes the empty slot. The layout is saved. */
+    private void dropHeld() {
+        if (!holding()) return;
+        boolean moved = heldAt != heldOrigin;
+        String key = heldKey;
+        int at = heldAt;
+        heldKey = null;
+        ignoreUp = false;
+        hand.setImageResource(R.drawable.ic_wii_hand);
+        if (moved) {
+            layout = new ArrayList<>(shown);
+            WiiLayout.save(act, layout);
+        }
+        lastKey = key;
+        bindStrip(layout);
+        if (at < strip.tiles.size() && !strip.tiles.get(at).isEmpty()) {
+            strip.tiles.get(at).requestFocus();
+            strip.tiles.get(at).setHeld(false);
+        }
+        if (sounds != null) sounds.confirm();
+        placeHand(frame.findFocus(), true, HAND_MS);
+        if (pendingReload) {
+            pendingReload = false;
+            reload();
+        }
     }
 
     /** The arrows show only where a previous or next page exists. */
@@ -254,17 +388,31 @@ final class WiiHome {
     // ---- navigation ------------------------------------------------------------------------------
 
     private boolean occupied(int i) {
-        return i >= 0 && i < apps.appCount();
+        return i >= 0 && i < strip.tiles.size() && !strip.tiles.get(i).isEmpty();
+    }
+
+    /** The tile of the column nearest to this row, or -1 when the column has none. */
+    private int inColumn(int col, int row) {
+        int best = -1;
+        for (int r = 0; r < ROWS; r++) {
+            int slot = col * ROWS + r;
+            if (occupied(slot) && (best < 0 || Math.abs(r - row) < Math.abs(best % ROWS - row))) best = slot;
+        }
+        return best;
     }
 
     private void focusSlot(int slot) {
         if (occupied(slot)) {
             strip.tiles.get(slot).requestFocus();
-        } else if (occupied(0)) {
-            strip.tiles.get(0).requestFocus();
-        } else {
-            root.os.requestFocus();
+            return;
         }
+        for (int i = 0; i < strip.tiles.size(); i++) {
+            if (occupied(i)) {
+                strip.tiles.get(i).requestFocus();
+                return;
+            }
+        }
+        root.os.requestFocus();
     }
 
     private static float centerX(View v) {
@@ -290,8 +438,8 @@ final class WiiHome {
         int best = -1;
         float bestDist = Float.MAX_VALUE;
         for (int c = scrollCol; c < scrollCol + VISIBLE_COLS; c++) {
-            if (!occupied(c * ROWS)) break;
-            int t = Math.min(c * ROWS + ROWS - 1, apps.appCount() - 1);
+            int t = inColumn(c, ROWS - 1);
+            if (t < 0) continue;
             float d = Math.abs(screenCenterX(t) - x);
             if (d < bestDist) {
                 bestDist = d;
@@ -301,22 +449,42 @@ final class WiiHome {
         if (best >= 0) strip.tiles.get(best).requestFocus();
     }
 
+    private void focusBeside(int i, int step) {
+        int row = i % ROWS;
+        for (int c = i / ROWS + step; c >= 0 && c < strip.columns(); c += step) {
+            int t = inColumn(c, row);
+            if (t >= 0) {
+                strip.tiles.get(t).requestFocus();
+                return;
+            }
+        }
+    }
+
     private boolean onTileKey(int i, int keyCode) {
-        int r = i % ROWS;
+        int col = i / ROWS;
         switch (keyCode) {
             case KeyEvent.KEYCODE_DPAD_LEFT:
-                if (occupied(i - ROWS)) strip.tiles.get(i - ROWS).requestFocus();
+                focusBeside(i, -1);
                 return true;
             case KeyEvent.KEYCODE_DPAD_RIGHT:
-                if (occupied(i + ROWS)) strip.tiles.get(i + ROWS).requestFocus();
-                else if (occupied((i / ROWS + 1) * ROWS)) strip.tiles.get(apps.appCount() - 1).requestFocus();
+                focusBeside(i, 1);
                 return true;
             case KeyEvent.KEYCODE_DPAD_UP:
-                if (r > 0) strip.tiles.get(i - 1).requestFocus();
+                for (int j = i - 1; j >= col * ROWS; j--) {
+                    if (occupied(j)) {
+                        strip.tiles.get(j).requestFocus();
+                        break;
+                    }
+                }
                 return true;
             case KeyEvent.KEYCODE_DPAD_DOWN:
-                if (r < ROWS - 1 && occupied(i + 1)) strip.tiles.get(i + 1).requestFocus();
-                else nearestControl(screenCenterX(i)).requestFocus();
+                for (int j = i + 1; j < (col + 1) * ROWS; j++) {
+                    if (occupied(j)) {
+                        strip.tiles.get(j).requestFocus();
+                        return true;
+                    }
+                }
+                nearestControl(screenCenterX(i)).requestFocus();
                 return true;
             default:
                 return false;
@@ -411,6 +579,11 @@ final class WiiHome {
         }
         float x = now.getLeft() + now.getWidth() * 0.60f;
         float y = now.getTop() + now.getHeight() * 0.50f;
+        if (holding() && onTile) {
+            // The fist has no pointing finger: its middle sits where the fingertip would.
+            x -= hand.getLayoutParams().width * 4.5f / 40f;
+            y -= hand.getLayoutParams().height * 10f / 44f;
+        }
         if (onTile) {
             x += strip.getLeft() - scrollCol * (float) strip.pitch;
             y += strip.getTop();

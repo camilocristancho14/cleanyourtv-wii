@@ -420,6 +420,7 @@ final class WiiViews {
         }
 
         void bindEmpty() {
+            stopWobble();
             empty = true;
             setFocusable(false);
             setClickable(false);
@@ -439,6 +440,7 @@ final class WiiViews {
         }
 
         void bindApp(AppAdapter.Entry e) {
+            stopWobble();
             empty = false;
             setFocusable(true);
             setClickable(true);
@@ -464,6 +466,31 @@ final class WiiViews {
         protected void onFocusChanged(boolean gained, int direction, Rect previouslyFocusedRect) {
             super.onFocusChanged(gained, direction, previouslyFocusedRect);
             if (!empty) Glow.pop(this, gained);
+        }
+
+        private android.animation.ObjectAnimator wobble;
+
+        /** Picked up for rearranging: lifted a bit higher than a focused tile, and wobbling slightly. */
+        private void stopWobble() {
+            if (wobble != null) wobble.cancel();
+            wobble = null;
+            setRotation(0f);
+        }
+
+        void setHeld(boolean held) {
+            stopWobble();
+            animate().cancel();
+            if (held) {
+                animate().scaleX(1.12f).scaleY(1.12f).translationZ(16f).setDuration(140).start();
+                wobble = android.animation.ObjectAnimator.ofFloat(this, ROTATION, -1.6f, 1.6f);
+                wobble.setDuration(120);
+                wobble.setRepeatCount(android.animation.ValueAnimator.INFINITE);
+                wobble.setRepeatMode(android.animation.ValueAnimator.REVERSE);
+                wobble.start();
+            } else {
+                animate().scaleX(isFocused() ? 1.06f : 1f).scaleY(isFocused() ? 1.06f : 1f)
+                        .translationZ(isFocused() ? 8f : 0f).setDuration(140).start();
+            }
         }
 
         @Override
