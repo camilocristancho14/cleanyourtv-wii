@@ -54,6 +54,22 @@ final class WiiViews {
                     radius + 1.2f * u, radius + 1.2f * u, p);
         }
 
+        /** Same glow, traced along an arbitrary outline (e.g. the SD card's folded corner). */
+        static void draw(Canvas c, Paint p, Path shape, float room, float u) {
+            final int steps = 6;
+            p.setStyle(Paint.Style.STROKE);
+            p.setStrokeJoin(Paint.Join.ROUND);
+            p.setStrokeCap(Paint.Cap.ROUND);
+            p.setColor(BLUE);
+            for (int k = steps; k >= 1; k--) {
+                float f = k / (float) steps;
+                p.setStrokeWidth(2 * room * f + room / steps * 1.9f);
+                p.setAlpha((int) ((96 * (1 - f) * (1 - f) + 20) * 0.6f));
+                c.drawPath(shape, p);
+            }
+            p.setAlpha(255);
+        }
+
         /** The small lift a focused channel gets. */
         static void pop(View v, boolean focused) {
             v.animate().cancel();
@@ -325,10 +341,8 @@ final class WiiViews {
             path.lineTo(l + w, t + h);
             path.lineTo(l, t + h);
             path.close();
-            if (isFocused()) {
-                RectF box = new RectF(l, t, l + w, t + h);
-                Glow.draw(c, paint, box, 6 * u, room, u);
-            }
+            boolean focused = isFocused();
+            if (focused) Glow.draw(c, paint, path, room, u);
             paint.setStyle(Paint.Style.FILL);
             paint.setShader(new LinearGradient(l, t, l + w, t + h, 0xFFFFFFFF, 0xFFD6EAF4, Shader.TileMode.CLAMP));
             c.drawPath(path, paint);
@@ -336,7 +350,7 @@ final class WiiViews {
             paint.setStyle(Paint.Style.STROKE);
             paint.setStrokeWidth(4.5f * u);
             paint.setStrokeJoin(Paint.Join.ROUND);
-            paint.setColor(0xFF74BADC);
+            paint.setColor(focused ? BLUE : 0xFF74BADC);
             c.drawPath(path, paint);
             paint.setStyle(Paint.Style.FILL);
             paint.setColor(0xFF8F979C);
