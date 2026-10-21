@@ -7,6 +7,9 @@ import java.util.List;
 final class WiiOrder {
     private WiiOrder() { }
 
+    /** Opened from the bottom buttons instead (wiiOS and SD), so they get no tile. */
+    static final List<String> NO_TILE = Arrays.asList("com.android.tv.settings", "com.alphainventor.filemanager");
+
     static final int CATEGORY_AUDIO = 1, CATEGORY_VIDEO = 2;   // ApplicationInfo.CATEGORY_*
 
     private static final List<String> VIDEO = Arrays.asList(

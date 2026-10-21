@@ -510,6 +510,11 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         return isLibraryAt(position) ? Long.MIN_VALUE : items.get(position).component.flattenToShortString().hashCode();
     }
 
+    /** These packages get no tile from the next reload(). */
+    void hidePackages(java.util.Collection<String> pkgs) {
+        hidden.addAll(pkgs);
+    }
+
     /** Wii menu: orders tiles by WiiOrder from the next reload(). */
     void setGroupByCategory(boolean on) {
         groupByCategory = on;

@@ -539,9 +539,46 @@ final class WiiViews {
         @Override public int getOpacity() { return android.graphics.PixelFormat.TRANSLUCENT; }
     }
 
-    /** The channels as one horizontal strip of columns of three; WiiHome slides it a column at a time. */
+    /** A paging arrow over the sliver of the next or previous page: white with a blue outline, never focusable. */
+    static final class Arrow extends View {
+        private final boolean left;
+        private final float u;
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Path path = new Path();
+
+        Arrow(Context ctx, boolean left, float u) {
+            super(ctx);
+            this.left = left;
+            this.u = u;
+            setFocusable(false);
+            setClickable(false);
+            setAlpha(0f);
+            setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
+        }
+
+        @Override
+        protected void onDraw(Canvas c) {
+            float inset = 5 * u, w = getWidth(), h = getHeight();
+            float tip = left ? inset : w - inset, base = left ? w - inset : inset;
+            path.reset();
+            path.moveTo(tip, h / 2);
+            path.lineTo(base, inset);
+            path.lineTo(base, h - inset);
+            path.close();
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(0xFFFFFFFF);
+            c.drawPath(path, paint);
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(4 * u);
+            paint.setStrokeJoin(Paint.Join.ROUND);
+            paint.setColor(0xFF4FB2E8);
+            c.drawPath(path, paint);
+        }
+    }
+
+    /** The channels as one horizontal strip of columns of three, four columns to a page; WiiHome slides it a page at a time. */
     static final class Strip extends ViewGroup {
-        static final int ROWS = 3, VISIBLE_COLS = 4;
+        static final int ROWS = WiiPages.ROWS, VISIBLE_COLS = WiiPages.COLS;
         final float u, room;
         final java.util.List<Tile> tiles = new java.util.ArrayList<>();
         private final Typeface font;
@@ -624,6 +661,7 @@ final class WiiViews {
         final Backdrop backdrop;
         final Bar bar;
         final Strip strip;
+        final Arrow prev, next;
         final Clock clock;
         final TextView date;
         final Control os, sd, mail;
@@ -640,6 +678,10 @@ final class WiiViews {
             addView(bar);
             strip = new Strip(ctx, u, font);
             addView(strip);
+            prev = new Arrow(ctx, true, u);
+            addView(prev);
+            next = new Arrow(ctx, false, u);
+            addView(next);
             clock = new Clock(ctx, font);
             addView(clock);
             date = new TextView(ctx);
@@ -671,6 +713,11 @@ final class WiiViews {
                 r = new RectF(0, h * 0.66f, w, h);
             } else if (v == strip) {
                 r = new RectF(0, h * 0.045f - room, w, h * 0.675f + room);
+            } else if (v == prev || v == next) {
+                // Centred on the middle row, over the sliver of the neighbouring page.
+                float aw = w * 0.032f, ah = h * 0.095f;
+                float cx = v == prev ? w * 0.037f : w * 0.963f;
+                r = new RectF(cx - aw / 2, h * 0.36f - ah / 2, cx + aw / 2, h * 0.36f + ah / 2);
             } else if (v == clock) {
                 r = new RectF(w * 0.35f, h * 0.693f, w * 0.65f, h * 0.805f);
             } else if (v == date) {

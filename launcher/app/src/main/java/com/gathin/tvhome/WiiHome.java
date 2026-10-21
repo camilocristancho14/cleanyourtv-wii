@@ -19,6 +19,7 @@ import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.animation.DecelerateInterpolator;
+import android.view.animation.PathInterpolator;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -38,15 +39,14 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * The Nintendo Wii menu (config wii_style): the channels in one strip of three rows that slides sideways a column
- * at a time, a curved bar with the clock, the wiiOS (Settings), SD (file manager) and envelope (Entradas) buttons.
+ * The Nintendo Wii menu (config wii_style): the channels in pages of 4 columns by 3 rows (12 apps) that slide
+ * sideways one page at a time, a curved bar with the clock, the wiiOS (Settings), SD (file manager) and envelope (Entradas) buttons.
  * It lives inside MainActivity, so the launcher is still the one HOME activity. D-pad navigation is explicit,
  * not left to focus search.
  */
 final class WiiHome {
     static final int ROWS = WiiViews.Strip.ROWS, VISIBLE_COLS = WiiViews.Strip.VISIBLE_COLS;
-    private static final int MIN_SLOTS = ROWS * VISIBLE_COLS;
-    private static final int SCROLL_MS = 240, HAND_MS = 150;
+    private static final int SCROLL_MS = 300, HAND_MS = 150;
     private static final String FILE_MANAGER = "com.alphainventor.filemanager";
     private static final String HDMI_SERVICE = "com.mediatek.tis/.HdmiInputService/";
     private static final String[] DAYS = {"Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"};
@@ -61,7 +61,7 @@ final class WiiHome {
     private FrameLayout dialog;
     private WiiSounds sounds;
     private boolean started, dirty = true;
-    /** First column of the window of four the strip is scrolled to (or heading to). */
+    /** First column of the page the strip is scrolled to (or heading to). */
     private int scrollCol;
     private String lastKey;
 
@@ -88,6 +88,7 @@ final class WiiHome {
         this.u = screenH / 1080f;
         this.apps = new AppAdapter(act, act, 0, cfg);
         apps.setGroupByCategory(true);
+        apps.hidePackages(WiiOrder.NO_TILE);
         Typeface font = act.getResources().getFont(R.font.outfit_medium);
         frame = new FrameLayout(act);
         root = new WiiViews.Root(act, screenH, font);
@@ -106,7 +107,7 @@ final class WiiHome {
         wire();
         bindStrip();
         frame.getViewTreeObserver().addOnGlobalFocusChangeListener(this::onFocusChanged);
-        root.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> placeHand(frame.findFocus(), false));
+        root.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> placeHand(frame.findFocus(), false, HAND_MS));
     }
 
     View view() {
@@ -183,10 +184,10 @@ final class WiiHome {
         }
     }
 
-    /** One slot per app, filled up to a whole column and to at least four columns, then bound. */
+    /** One slot per app; the last page is padded with empty slots to a full 12, then bound. */
     private void bindStrip() {
         int n = apps.appCount();
-        strip.setCount(Math.max(MIN_SLOTS, (n + ROWS - 1) / ROWS * ROWS));
+        strip.setCount(WiiPages.slots(n));
         for (int i = 0; i < strip.tiles.size(); i++) {
             WiiViews.Tile tile = strip.tiles.get(i);
             if (i < n) {
@@ -211,6 +212,19 @@ final class WiiHome {
         strip.requestLayout();
     }
 
+    /** The arrows show only where a previous or next page exists. */
+    private void updateArrows(boolean animate) {
+        setArrow(root.prev, scrollCol > 0, animate);
+        setArrow(root.next, scrollCol + VISIBLE_COLS < strip.columns(), animate);
+    }
+
+    private static void setArrow(View arrow, boolean show, boolean animate) {
+        arrow.animate().cancel();
+        float alpha = show ? 1f : 0f;
+        if (animate) arrow.animate().alpha(alpha).setDuration(150).start();
+        else arrow.setAlpha(alpha);
+    }
+
     private void updateClock() {
         Calendar now = Calendar.getInstance();
         root.clock.setTime(now.get(Calendar.HOUR_OF_DAY), now.get(Calendar.MINUTE), DateFormat.is24HourFormat(act));
@@ -220,24 +234,21 @@ final class WiiHome {
 
     // ---- scrolling -------------------------------------------------------------------------------
 
-    /** Slides the strip, if it has to, so this column is one of the four whole ones; the neighbours' slivers stay. */
-    private void showColumn(int col, boolean animate) {
-        int max = Math.max(0, strip.columns() - VISIBLE_COLS);
-        int s = scrollCol;
-        if (col < s) s = col;
-        else if (col > s + VISIBLE_COLS - 1) s = col - (VISIBLE_COLS - 1);
-        s = Math.max(0, Math.min(max, s));
+    /** Slides the strip, if the column is on another page, to that page; the neighbours' slivers stay. True if it moved. */
+    private boolean showColumn(int col, boolean animate) {
+        int s = Math.min(WiiPages.pageStart(col), Math.max(0, strip.columns() - VISIBLE_COLS));
         boolean moved = s != scrollCol;
         scrollCol = s;
+        updateArrows(animate && moved);
         float target = -s * (float) strip.pitch;
         strip.animate().cancel();
         if (animate && moved && strip.pitch > 0) {
             if (sounds != null) sounds.swoosh();
-            strip.animate().translationX(target).setDuration(SCROLL_MS)
-                    .setInterpolator(new DecelerateInterpolator(1.6f)).start();
+            strip.animate().translationX(target).setDuration(SCROLL_MS).setInterpolator(new PathInterpolator(0.4f, 0f, 0.2f, 1f)).start();
         } else {
             strip.setTranslationX(target);
         }
+        return moved;
     }
 
     // ---- navigation ------------------------------------------------------------------------------
@@ -380,16 +391,17 @@ final class WiiHome {
     // ---- hand cursor and focus sounds ------------------------------------------------------------
 
     private void onFocusChanged(View old, View now) {
+        boolean paged = false;
         if (now != null && now.getParent() == strip) {
             int index = strip.tiles.indexOf(now);
-            if (index >= 0) showColumn(index / ROWS, true);
+            if (index >= 0) paged = showColumn(index / ROWS, true);
         }
         if (old != null && now != null && sounds != null) sounds.tick();
-        placeHand(now, true);
+        placeHand(now, true, paged ? SCROLL_MS : HAND_MS);
     }
 
     /** The hand glides to the focused tile or button; for a tile it aims where the strip is heading, not where it is. */
-    private void placeHand(View now, boolean animate) {
+    private void placeHand(View now, boolean animate, int ms) {
         boolean onTile = now != null && now.getParent() == strip;
         boolean onBar = now != null && now.getParent() == root;
         if (!onTile && !onBar) {
@@ -411,8 +423,8 @@ final class WiiHome {
             else hand.setAlpha(1f);
             return;
         }
-        hand.animate().translationX(x).translationY(y).alpha(1f).setDuration(HAND_MS)
-                .setInterpolator(new DecelerateInterpolator(1.4f)).start();
+        hand.animate().translationX(x).translationY(y).alpha(1f).setDuration(ms)
+                .setInterpolator(ms == SCROLL_MS ? new PathInterpolator(0.4f, 0f, 0.2f, 1f) : new DecelerateInterpolator(1.4f)).start();
     }
 
     // ---- Entradas --------------------------------------------------------------------------------
