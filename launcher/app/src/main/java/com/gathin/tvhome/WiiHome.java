@@ -18,8 +18,9 @@ import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.ViewTreeObserver;
+import android.view.animation.DecelerateInterpolator;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -37,12 +38,15 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * The Nintendo Wii menu (config wii_style): twelve channels a page, a curved bar with the clock, the
- * wiiOS (Settings), SD (file manager) and envelope (Entradas) buttons. It lives inside MainActivity, so
- * the launcher is still the one HOME activity. D-pad navigation is explicit, not left to focus search.
+ * The Nintendo Wii menu (config wii_style): the channels in one strip of three rows that slides sideways a column
+ * at a time, a curved bar with the clock, the wiiOS (Settings), SD (file manager) and envelope (Entradas) buttons.
+ * It lives inside MainActivity, so the launcher is still the one HOME activity. D-pad navigation is explicit,
+ * not left to focus search.
  */
 final class WiiHome {
-    static final int COLS = 4, ROWS = 3, PER_PAGE = COLS * ROWS;
+    static final int ROWS = WiiViews.Strip.ROWS, VISIBLE_COLS = WiiViews.Strip.VISIBLE_COLS;
+    private static final int MIN_SLOTS = ROWS * VISIBLE_COLS;
+    private static final int SCROLL_MS = 240, HAND_MS = 150;
     private static final String FILE_MANAGER = "com.alphainventor.filemanager";
     private static final String HDMI_SERVICE = "com.mediatek.tis/.HdmiInputService/";
     private static final String[] DAYS = {"Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"};
@@ -51,10 +55,14 @@ final class WiiHome {
     private final AppAdapter apps;
     private final FrameLayout frame;
     private final WiiViews.Root root;
+    private final WiiViews.Strip strip;
+    private final ImageView hand;
     private final float u;
     private FrameLayout dialog;
+    private WiiSounds sounds;
     private boolean started, dirty = true;
-    private int page;
+    /** First column of the window of four the strip is scrolled to (or heading to). */
+    private int scrollCol;
     private String lastKey;
 
     private final IntentFilter packageFilter = new IntentFilter();
@@ -76,12 +84,19 @@ final class WiiHome {
 
     WiiHome(MainActivity act, Config cfg) {
         this.act = act;
-        this.u = act.getResources().getDisplayMetrics().heightPixels / 1080f;
+        int screenH = act.getResources().getDisplayMetrics().heightPixels;
+        this.u = screenH / 1080f;
         this.apps = new AppAdapter(act, act, 0, cfg);
+        apps.setGroupByCategory(true);
         Typeface font = act.getResources().getFont(R.font.outfit_medium);
         frame = new FrameLayout(act);
-        root = new WiiViews.Root(act, act.getResources().getDisplayMetrics().heightPixels, font);
+        root = new WiiViews.Root(act, screenH, font);
+        strip = root.strip;
         frame.addView(root, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        // The cursor is the last child of the frame: nothing the strip scales or lifts can draw over it.
+        hand = WiiViews.newHand(act);
+        float hh = screenH * 0.115f;
+        frame.addView(hand, new FrameLayout.LayoutParams(Math.round(hh * 40f / 44f), Math.round(hh)));
         packageFilter.addAction(Intent.ACTION_PACKAGE_ADDED);
         packageFilter.addAction(Intent.ACTION_PACKAGE_REMOVED);
         packageFilter.addDataScheme("package");
@@ -89,7 +104,9 @@ final class WiiHome {
         timeFilter.addAction(Intent.ACTION_TIME_CHANGED);
         timeFilter.addAction(Intent.ACTION_TIMEZONE_CHANGED);
         wire();
-        frame.getViewTreeObserver().addOnGlobalFocusChangeListener(this::moveHand);
+        bindStrip();
+        frame.getViewTreeObserver().addOnGlobalFocusChangeListener(this::onFocusChanged);
+        root.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> placeHand(frame.findFocus(), false));
     }
 
     View view() {
@@ -100,6 +117,7 @@ final class WiiHome {
 
     void onStart() {
         started = true;
+        sounds = new WiiSounds(act);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             act.registerReceiver(packageReceiver, packageFilter, Context.RECEIVER_NOT_EXPORTED);
             act.registerReceiver(timeReceiver, timeFilter, Context.RECEIVER_NOT_EXPORTED);
@@ -114,6 +132,7 @@ final class WiiHome {
     void onResume() {
         updateClock();
         if (dialog == null && frame.findFocus() == null) focusSlot(0);
+        if (sounds != null) sounds.startup();
     }
 
     void onPause() {
@@ -125,13 +144,15 @@ final class WiiHome {
         dirty = true;
         act.unregisterReceiver(packageReceiver);
         act.unregisterReceiver(timeReceiver);
+        if (sounds != null) sounds.release();
+        sounds = null;
     }
 
     void onHome() {
         closeDialog(false);
         lastKey = null;
-        page = 0;
-        bindPage();
+        bindStrip();
+        showColumn(0, true);
         focusSlot(0);
     }
 
@@ -143,8 +164,8 @@ final class WiiHome {
 
     private void reload() {
         View focused = frame.findFocus();
-        for (int i = 0; i < PER_PAGE; i++) {
-            if (root.tiles[i] == focused && !root.tiles[i].isEmpty()) lastKey = apps.keyAt(page * PER_PAGE + i);
+        for (int i = 0; i < strip.tiles.size(); i++) {
+            if (strip.tiles.get(i) == focused && !strip.tiles.get(i).isEmpty()) lastKey = apps.keyAt(i);
         }
         final List<ResolveInfo> leanback = act.getPackageManager().queryIntentActivities(
                 new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER), 0);
@@ -154,44 +175,40 @@ final class WiiHome {
         for (int i = 0; lastKey != null && i < apps.appCount(); i++) {
             if (lastKey.equals(apps.keyAt(i))) at = i;
         }
-        if (at >= 0) page = at / PER_PAGE;
-        page = Math.max(0, Math.min(page, pageCount() - 1));
-        bindPage();
+        bindStrip();
+        if (at >= 0) showColumn(at / ROWS, false);
         if (dialog == null && (focused != null || at >= 0 || frame.findFocus() == null)) {
-            final int slot = at >= 0 ? at % PER_PAGE : 0;
+            final int slot = at >= 0 ? at : 0;
             root.post(() -> focusSlot(slot));
         }
     }
 
-    private int pageCount() {
-        return Math.max(1, (apps.appCount() + PER_PAGE - 1) / PER_PAGE);
-    }
-
-    private void bindPage() {
-        for (int i = 0; i < PER_PAGE; i++) {
-            int index = page * PER_PAGE + i;
-            WiiViews.Tile tile = root.tiles[i];
-            if (index < apps.appCount()) {
-                final AppAdapter.Entry e = apps.entryAt(index);
+    /** One slot per app, filled up to a whole column and to at least four columns, then bound. */
+    private void bindStrip() {
+        int n = apps.appCount();
+        strip.setCount(Math.max(MIN_SLOTS, (n + ROWS - 1) / ROWS * ROWS));
+        for (int i = 0; i < strip.tiles.size(); i++) {
+            WiiViews.Tile tile = strip.tiles.get(i);
+            if (i < n) {
+                final AppAdapter.Entry e = apps.entryAt(i);
                 tile.bindApp(e);
                 tile.setOnClickListener(v -> {
-                    lastKey = apps.keyAt(page * PER_PAGE + indexOf(v));
+                    lastKey = apps.keyAt(strip.tiles.indexOf(v));
+                    if (sounds != null) sounds.confirm();
                     apps.launch(e);
+                });
+                final int slot = i;
+                tile.setOnKeyListener((v, keyCode, event) -> {
+                    if (!isDpad(keyCode)) return false;
+                    return event.getAction() != KeyEvent.ACTION_DOWN || onTileKey(slot, keyCode);
                 });
             } else {
                 tile.bindEmpty();
+                tile.setOnKeyListener(null);
             }
         }
-        root.left.setVisibility(page > 0 ? View.VISIBLE : View.INVISIBLE);
-        root.right.setVisibility(page < pageCount() - 1 ? View.VISIBLE : View.INVISIBLE);
-        root.left.setFocusable(page > 0);
-        root.right.setFocusable(page < pageCount() - 1);
-        root.requestLayout();
-    }
-
-    private int indexOf(View tile) {
-        for (int i = 0; i < PER_PAGE; i++) if (root.tiles[i] == tile) return i;
-        return 0;
+        showColumn(scrollCol, false);
+        strip.requestLayout();
     }
 
     private void updateClock() {
@@ -201,22 +218,39 @@ final class WiiHome {
                 + "/" + (now.get(Calendar.MONTH) + 1));
     }
 
+    // ---- scrolling -------------------------------------------------------------------------------
+
+    /** Slides the strip, if it has to, so this column is one of the four whole ones; the neighbours' slivers stay. */
+    private void showColumn(int col, boolean animate) {
+        int max = Math.max(0, strip.columns() - VISIBLE_COLS);
+        int s = scrollCol;
+        if (col < s) s = col;
+        else if (col > s + VISIBLE_COLS - 1) s = col - (VISIBLE_COLS - 1);
+        s = Math.max(0, Math.min(max, s));
+        boolean moved = s != scrollCol;
+        scrollCol = s;
+        float target = -s * (float) strip.pitch;
+        strip.animate().cancel();
+        if (animate && moved && strip.pitch > 0) {
+            if (sounds != null) sounds.swoosh();
+            strip.animate().translationX(target).setDuration(SCROLL_MS)
+                    .setInterpolator(new DecelerateInterpolator(1.6f)).start();
+        } else {
+            strip.setTranslationX(target);
+        }
+    }
+
     // ---- navigation ------------------------------------------------------------------------------
 
     private boolean occupied(int i) {
-        return i >= 0 && i < PER_PAGE && !root.tiles[i].isEmpty();
-    }
-
-    private int lastOccupiedInRow(int row) {
-        for (int c = COLS - 1; c >= 0; c--) if (occupied(row * COLS + c)) return row * COLS + c;
-        return -1;
+        return i >= 0 && i < apps.appCount();
     }
 
     private void focusSlot(int slot) {
         if (occupied(slot)) {
-            root.tiles[slot].requestFocus();
+            strip.tiles.get(slot).requestFocus();
         } else if (occupied(0)) {
-            root.tiles[0].requestFocus();
+            strip.tiles.get(0).requestFocus();
         } else {
             root.os.requestFocus();
         }
@@ -234,82 +268,44 @@ final class WiiHome {
         return best;
     }
 
+    /** Where the tile's centre will be on screen once the strip has finished sliding. */
+    private float screenCenterX(int index) {
+        WiiViews.Tile t = strip.tiles.get(index);
+        return strip.getLeft() + t.getLeft() + t.getWidth() / 2f - scrollCol * (float) strip.pitch;
+    }
+
     private void upFromBar(View from) {
         float x = centerX(from);
-        int col = 0;
+        int best = -1;
         float bestDist = Float.MAX_VALUE;
-        for (int c = 0; c < COLS; c++) {
-            float d = Math.abs(centerX(root.tiles[c]) - x);
+        for (int c = scrollCol; c < scrollCol + VISIBLE_COLS; c++) {
+            if (!occupied(c * ROWS)) break;
+            int t = Math.min(c * ROWS + ROWS - 1, apps.appCount() - 1);
+            float d = Math.abs(screenCenterX(t) - x);
             if (d < bestDist) {
                 bestDist = d;
-                col = c;
+                best = t;
             }
         }
-        for (int r = ROWS - 1; r >= 0; r--) {
-            int t = occupied(r * COLS + col) ? r * COLS + col : lastOccupiedInRow(r);
-            if (t >= 0) {
-                root.tiles[t].requestFocus();
-                return;
-            }
-        }
+        if (best >= 0) strip.tiles.get(best).requestFocus();
     }
 
     private boolean onTileKey(int i, int keyCode) {
-        int r = i / COLS, c = i % COLS;
+        int r = i % ROWS;
         switch (keyCode) {
             case KeyEvent.KEYCODE_DPAD_LEFT:
-                if (c > 0) root.tiles[i - 1].requestFocus();
-                else if (page > 0) root.left.requestFocus();
+                if (occupied(i - ROWS)) strip.tiles.get(i - ROWS).requestFocus();
                 return true;
             case KeyEvent.KEYCODE_DPAD_RIGHT:
-                if (c < COLS - 1 && occupied(i + 1)) root.tiles[i + 1].requestFocus();
-                else if (page < pageCount() - 1) root.right.requestFocus();
+                if (occupied(i + ROWS)) strip.tiles.get(i + ROWS).requestFocus();
+                else if (occupied((i / ROWS + 1) * ROWS)) strip.tiles.get(apps.appCount() - 1).requestFocus();
                 return true;
             case KeyEvent.KEYCODE_DPAD_UP:
-                if (r > 0) root.tiles[i - COLS].requestFocus();
+                if (r > 0) strip.tiles.get(i - 1).requestFocus();
                 return true;
             case KeyEvent.KEYCODE_DPAD_DOWN:
-                for (int rr = r + 1; rr < ROWS; rr++) {
-                    int t = occupied(rr * COLS + c) ? rr * COLS + c : lastOccupiedInRow(rr);
-                    if (t >= 0) {
-                        root.tiles[t].requestFocus();
-                        return true;
-                    }
-                }
-                nearestControl(centerX(root.tiles[i])).requestFocus();
-                return true;
-            default:
-                return false;
-        }
-    }
-
-    private int middleRowTarget(boolean fromLeft) {
-        int t = fromLeft ? COLS : 2 * COLS - 1;
-        if (occupied(t)) return t;
-        t = lastOccupiedInRow(1);
-        if (t >= 0) return fromLeft ? COLS : t;
-        t = lastOccupiedInRow(0);
-        return t >= 0 ? (fromLeft ? 0 : t) : -1;
-    }
-
-    private boolean onArrowKey(boolean isRight, int keyCode) {
-        switch (keyCode) {
-            case KeyEvent.KEYCODE_DPAD_LEFT:
-                if (isRight) {
-                    int t = middleRowTarget(false);
-                    if (t >= 0) root.tiles[t].requestFocus();
-                }
-                return true;
-            case KeyEvent.KEYCODE_DPAD_RIGHT:
-                if (!isRight) {
-                    int t = middleRowTarget(true);
-                    if (t >= 0) root.tiles[t].requestFocus();
-                }
-                return true;
-            case KeyEvent.KEYCODE_DPAD_DOWN:
-                (isRight ? root.mail : root.os).requestFocus();
-                return true;
-            case KeyEvent.KEYCODE_DPAD_UP:
+                if (r < ROWS - 1 && occupied(i + 1)) strip.tiles.get(i + 1).requestFocus();
+                else nearestControl(screenCenterX(i)).requestFocus();
                 return true;
             default:
                 return false;
@@ -342,23 +338,6 @@ final class WiiHome {
     }
 
     private void wire() {
-        for (int i = 0; i < PER_PAGE; i++) {
-            final int slot = i;
-            root.tiles[i].setOnKeyListener((v, keyCode, event) -> {
-                if (!isDpad(keyCode)) return false;
-                return event.getAction() != KeyEvent.ACTION_DOWN || onTileKey(slot, keyCode);
-            });
-        }
-        root.left.setOnKeyListener((v, keyCode, event) -> {
-            if (!isDpad(keyCode)) return false;
-            return event.getAction() != KeyEvent.ACTION_DOWN || onArrowKey(false, keyCode);
-        });
-        root.right.setOnKeyListener((v, keyCode, event) -> {
-            if (!isDpad(keyCode)) return false;
-            return event.getAction() != KeyEvent.ACTION_DOWN || onArrowKey(true, keyCode);
-        });
-        root.left.setOnClickListener(v -> turn(-1));
-        root.right.setOnClickListener(v -> turn(1));
         View.OnKeyListener bar = (v, keyCode, event) -> {
             if (!isDpad(keyCode)) return false;
             return event.getAction() != KeyEvent.ACTION_DOWN || onBarKey(v, keyCode);
@@ -366,26 +345,26 @@ final class WiiHome {
         root.os.setOnKeyListener(bar);
         root.sd.setOnKeyListener(bar);
         root.mail.setOnKeyListener(bar);
-        root.os.setOnClickListener(v -> act.open(act.systemIntent(android.provider.Settings.ACTION_SETTINGS)));
+        root.os.setOnClickListener(v -> {
+            confirmSound();
+            act.open(act.systemIntent(android.provider.Settings.ACTION_SETTINGS));
+        });
         root.os.setOnLongClickListener(v -> {
             act.openLauncherSettings();
             return true;
         });
-        root.sd.setOnClickListener(v -> openFileManager());
-        root.mail.setOnClickListener(v -> showEntradas());
+        root.sd.setOnClickListener(v -> {
+            confirmSound();
+            openFileManager();
+        });
+        root.mail.setOnClickListener(v -> {
+            confirmSound();
+            showEntradas();
+        });
     }
 
-    private void turn(int by) {
-        View arrow = by < 0 ? root.left : root.right;
-        page = Math.max(0, Math.min(pageCount() - 1, page + by));
-        lastKey = null;
-        bindPage();
-        if (arrow.getVisibility() == View.VISIBLE) {
-            arrow.requestFocus();
-        } else {
-            int t = middleRowTarget(by < 0);
-            root.tiles[Math.max(t, 0)].requestFocus();
-        }
+    private void confirmSound() {
+        if (sounds != null) sounds.confirm();
     }
 
     private void openFileManager() {
@@ -398,24 +377,42 @@ final class WiiHome {
         act.open(i);
     }
 
-    // ---- hand cursor -----------------------------------------------------------------------------
+    // ---- hand cursor and focus sounds ------------------------------------------------------------
 
-    private void moveHand(View old, View now) {
-        View hand = root.hand;
-        boolean onPage = now != null && now.getParent() == root;
-        if (!onPage) {
+    private void onFocusChanged(View old, View now) {
+        if (now != null && now.getParent() == strip) {
+            int index = strip.tiles.indexOf(now);
+            if (index >= 0) showColumn(index / ROWS, true);
+        }
+        if (old != null && now != null && sounds != null) sounds.tick();
+        placeHand(now, true);
+    }
+
+    /** The hand glides to the focused tile or button; for a tile it aims where the strip is heading, not where it is. */
+    private void placeHand(View now, boolean animate) {
+        boolean onTile = now != null && now.getParent() == strip;
+        boolean onBar = now != null && now.getParent() == root;
+        if (!onTile && !onBar) {
             hand.animate().cancel();
             hand.animate().alpha(0f).setDuration(100).start();
             return;
         }
         float x = now.getLeft() + now.getWidth() * 0.60f;
         float y = now.getTop() + now.getHeight() * 0.50f;
-        if (hand.getAlpha() < 0.5f) {
-            hand.setTranslationX(x);
-            hand.setTranslationY(y);
+        if (onTile) {
+            x += strip.getLeft() - scrollCol * (float) strip.pitch;
+            y += strip.getTop();
         }
         hand.animate().cancel();
-        hand.animate().translationX(x).translationY(y).alpha(1f).setDuration(130).start();
+        if (!animate || hand.getAlpha() < 0.5f) {
+            hand.setTranslationX(x);
+            hand.setTranslationY(y);
+            if (animate) hand.animate().alpha(1f).setDuration(100).start();
+            else hand.setAlpha(1f);
+            return;
+        }
+        hand.animate().translationX(x).translationY(y).alpha(1f).setDuration(HAND_MS)
+                .setInterpolator(new DecelerateInterpolator(1.4f)).start();
     }
 
     // ---- Entradas --------------------------------------------------------------------------------
@@ -579,6 +576,7 @@ final class WiiHome {
         WiiViews.Pill p = new WiiViews.Pill(act, u, root.font);
         p.setText(text);
         p.setOnClickListener(v -> {
+            confirmSound();
             closeDialog(true);
             action.run();
         });

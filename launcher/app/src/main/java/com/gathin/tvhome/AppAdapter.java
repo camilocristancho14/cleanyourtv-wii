@@ -5,6 +5,7 @@ import android.content.ActivityNotFoundException;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.content.res.Resources;
@@ -72,6 +73,8 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         final String name;
         /** Ambient glow colour; 0 until sampled from the banner, or the card's accent from the start. */
         int ambient;
+        /** ApplicationInfo.category of the app, for the Wii menu's grouping. */
+        int category = ApplicationInfo.CATEGORY_UNDEFINED;
 
         Entry(String label, ComponentName component, Drawable banner, Drawable icon) {
             this(APP, label, component, banner, icon, null, 0);
@@ -199,6 +202,8 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
     /** Tile names and bundled banners that replace the app's own (config.xml, app_labels and app_banners). */
     private final Map<String, String> appLabels, appBanners;
     private final List<Entry> items = new ArrayList<>();
+    /** Wii menu: video, music, then the rest, instead of dock_apps then alphabetical (WiiOrder). */
+    private boolean groupByCategory;
 
     AppAdapter(Context ctx, TileListener listener, int dockSize, Config cfg) {
         this.ctx = ctx;
@@ -276,11 +281,16 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
             } else {
                 fresh.add(new Entry(label, component, banner, icon));
             }
+            fresh.get(fresh.size() - 1).category = ri.activityInfo.applicationInfo.category;
         }
         Collections.sort(fresh, (a, b) -> {
             // The owner's own order first; tiles it does not know (new installs) follow by the rule below.
             int saved = Order.compare(savedRanks, a.component.flattenToShortString(), b.component.flattenToShortString());
             if (saved != 0) return saved;
+            if (groupByCategory) {
+                int byGroup = Integer.compare(WiiOrder.rank(a.pkg, a.category), WiiOrder.rank(b.pkg, b.category));
+                return byGroup != 0 ? byGroup : a.label.compareToIgnoreCase(b.label);
+            }
             int fa = favourites.indexOf(a.pkg), fb = favourites.indexOf(b.pkg);
             if (fa >= 0 || fb >= 0) {
                 if (fa < 0) return 1;
@@ -498,6 +508,11 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
     @Override
     public long getItemId(int position) {
         return isLibraryAt(position) ? Long.MIN_VALUE : items.get(position).component.flattenToShortString().hashCode();
+    }
+
+    /** Wii menu: orders tiles by WiiOrder from the next reload(). */
+    void setGroupByCategory(boolean on) {
+        groupByCategory = on;
     }
 
     /** Uses this saved order from the next reload() (Order.ranks). */

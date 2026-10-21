@@ -350,60 +350,6 @@ final class WiiViews {
         }
     }
 
-    /** The page arrow: a gray slot with a blue-outlined triangle. */
-    static final class Arrow extends View {
-        private final boolean pointsRight;
-        private final float u, room;
-        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Path tri = new Path();
-        private final RectF rect = new RectF();
-
-        Arrow(Context ctx, boolean pointsRight, float u) {
-            super(ctx);
-            this.pointsRight = pointsRight;
-            this.u = u;
-            this.room = 10 * u;
-            setFocusable(true);
-            setClickable(true);
-        }
-
-        @Override
-        protected void onFocusChanged(boolean gained, int direction, Rect previouslyFocusedRect) {
-            super.onFocusChanged(gained, direction, previouslyFocusedRect);
-            Glow.pop(this, gained);
-        }
-
-        @Override
-        protected void onDraw(Canvas c) {
-            rect.set(room, room, getWidth() - room, getHeight() - room);
-            float radius = 16 * u;
-            if (isFocused()) Glow.draw(c, paint, rect, radius, room, u);
-            paint.setStyle(Paint.Style.FILL);
-            paint.setColor(0xFFE2E3E5);
-            c.drawRoundRect(rect, radius, radius, paint);
-            paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(2f * u);
-            paint.setColor(TILE_BORDER);
-            c.drawRoundRect(rect, radius, radius, paint);
-            float cx = rect.centerX(), cy = rect.centerY();
-            float hw = rect.width() * 0.17f, hh = Math.min(rect.height() * 0.2f, rect.width() * 0.3f);
-            float dir = pointsRight ? 1 : -1;
-            tri.reset();
-            tri.moveTo(cx - dir * hw, cy - hh);
-            tri.lineTo(cx + dir * hw, cy);
-            tri.lineTo(cx - dir * hw, cy + hh);
-            tri.close();
-            paint.setStyle(Paint.Style.FILL);
-            paint.setColor(0x66FFFFFF);
-            c.drawPath(tri, paint);
-            paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(4.5f * u);
-            paint.setStrokeJoin(Paint.Join.ROUND);
-            paint.setColor(0xFF63B4E0);
-            c.drawPath(tri, paint);
-        }
-    }
-
     /** A channel: a white rounded tile with a thin gray border, or an empty gray slot. */
     static final class Tile extends FrameLayout {
         private final float u, room, radius;
@@ -593,17 +539,94 @@ final class WiiViews {
         @Override public int getOpacity() { return android.graphics.PixelFormat.TRANSLUCENT; }
     }
 
+    /** The channels as one horizontal strip of columns of three; WiiHome slides it a column at a time. */
+    static final class Strip extends ViewGroup {
+        static final int ROWS = 3, VISIBLE_COLS = 4;
+        final float u, room;
+        final java.util.List<Tile> tiles = new java.util.ArrayList<>();
+        private final Typeface font;
+        /** Geometry from the last measure, in pixels. */
+        int pitch, tileW, tileH, margin, gapY;
+
+        Strip(Context ctx, float u, Typeface font) {
+            super(ctx);
+            this.u = u;
+            this.room = 10 * u;
+            this.font = font;
+            setClipChildren(false);
+            setClipToPadding(false);
+        }
+
+        /** Columns the strip has room for, empty slots included. */
+        int columns() {
+            return (tiles.size() + ROWS - 1) / ROWS;
+        }
+
+        void setCount(int n) {
+            while (tiles.size() < n) {
+                Tile t = new Tile(getContext(), u, font);
+                tiles.add(t);
+                addView(t);
+            }
+            while (tiles.size() > n) removeView(tiles.remove(tiles.size() - 1));
+        }
+
+        /** Left edge of a column's tile (no scroll), in strip coordinates. */
+        float columnLeft(int col) {
+            return margin + col * (float) pitch;
+        }
+
+        private void geometry(int w, int h) {
+            pitch = Math.round(w * 0.21f);
+            tileW = pitch - Math.round(w * 0.0125f);
+            margin = Math.round((w - (3 * pitch + tileW)) / 2f);
+            gapY = Math.round(21.6f * u);
+            tileH = Math.round((h - 2 * room - 2 * gapY) / 3f);
+        }
+
+        @Override
+        protected void onMeasure(int wSpec, int hSpec) {
+            int w = MeasureSpec.getSize(wSpec), h = MeasureSpec.getSize(hSpec);
+            setMeasuredDimension(w, h);
+            geometry(w, h);
+            int cw = tileW + Math.round(2 * room), ch = tileH + Math.round(2 * room);
+            for (int i = 0; i < getChildCount(); i++) {
+                getChildAt(i).measure(MeasureSpec.makeMeasureSpec(cw, MeasureSpec.EXACTLY),
+                        MeasureSpec.makeMeasureSpec(ch, MeasureSpec.EXACTLY));
+            }
+        }
+
+        @Override
+        protected void onLayout(boolean changed, int l, int t, int r, int b) {
+            for (int i = 0; i < tiles.size(); i++) {
+                int col = i / ROWS, row = i % ROWS;
+                int x = Math.round(columnLeft(col) - room);
+                int y = row * (tileH + gapY);
+                Tile tile = tiles.get(i);
+                tile.layout(x, y, x + tile.getMeasuredWidth(), y + tile.getMeasuredHeight());
+            }
+        }
+    }
+
+    /** The hand cursor: a plain view WiiHome adds on top of everything, sized from the screen height. */
+    static ImageView newHand(Context ctx) {
+        ImageView hand = new ImageView(ctx);
+        hand.setImageResource(R.drawable.ic_wii_hand);
+        hand.setAlpha(0f);
+        hand.setTranslationZ(1000f);
+        hand.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        return hand;
+    }
+
     /** The whole screen: places every child from the screen size. */
     static final class Root extends ViewGroup {
         final float u;
         final Backdrop backdrop;
         final Bar bar;
-        final Tile[] tiles = new Tile[WiiHome.PER_PAGE];
-        final Arrow left, right;
+        final Strip strip;
         final Clock clock;
         final TextView date;
         final Control os, sd, mail;
-        final ImageView hand;
         final Typeface font;
 
         Root(Context ctx, float screenHeightPx, Typeface font) {
@@ -615,16 +638,8 @@ final class WiiViews {
             addView(backdrop);
             bar = new Bar(ctx, u);
             addView(bar);
-            for (int i = 0; i < tiles.length; i++) {
-                tiles[i] = new Tile(ctx, u, font);
-                addView(tiles[i]);
-            }
-            left = new Arrow(ctx, false, u);
-            right = new Arrow(ctx, true, u);
-            left.setContentDescription("Anterior");
-            right.setContentDescription("Siguiente");
-            addView(left);
-            addView(right);
+            strip = new Strip(ctx, u, font);
+            addView(strip);
             clock = new Clock(ctx, font);
             addView(clock);
             date = new TextView(ctx);
@@ -645,27 +660,6 @@ final class WiiViews {
             addView(os);
             addView(sd);
             addView(mail);
-            hand = new ImageView(ctx);
-            hand.setImageResource(R.drawable.ic_wii_hand);
-            hand.setAlpha(0f);
-            hand.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
-            addView(hand);
-        }
-
-        float gridLeft(int w) { return w * 0.095f; }
-        float gridRight(int w) { return w * 0.905f; }
-        float gapX(int w) { return w * 0.0125f; }
-        float gridTop(int h) { return h * 0.045f; }
-        float gapY(int h) { return h * 0.02f; }
-        float tileW(int w) { return (gridRight(w) - gridLeft(w) - 3 * gapX(w)) / 4f; }
-        float tileH(int h) { return (h * 0.675f - gridTop(h) - 2 * gapY(h)) / 3f; }
-
-        /** Slot rectangle of a channel, without the glow room. */
-        RectF slot(int w, int h, int index) {
-            int r = index / WiiHome.COLS, c = index % WiiHome.COLS;
-            float x = gridLeft(w) + c * (tileW(w) + gapX(w));
-            float y = gridTop(h) + r * (tileH(h) + gapY(h));
-            return new RectF(x, y, x + tileW(w), y + tileH(h));
         }
 
         Rect rectOf(View v, int w, int h) {
@@ -675,12 +669,8 @@ final class WiiViews {
                 r = new RectF(0, 0, w, h);
             } else if (v == bar) {
                 r = new RectF(0, h * 0.66f, w, h);
-            } else if (v == left || v == right) {
-                float cw = w * 0.056f;
-                float cx = v == left ? gridLeft(w) / 2f : (gridRight(w) + w) / 2f;
-                RectF mid = slot(w, h, 4);
-                r = new RectF(cx - cw / 2, mid.top, cx + cw / 2, mid.bottom);
-                r.inset(-room, -room);
+            } else if (v == strip) {
+                r = new RectF(0, h * 0.045f - room, w, h * 0.675f + room);
             } else if (v == clock) {
                 r = new RectF(w * 0.35f, h * 0.693f, w * 0.65f, h * 0.805f);
             } else if (v == date) {
@@ -693,14 +683,8 @@ final class WiiViews {
                 float bw = w * 0.044f + 2 * 12 * u, bh = h * 0.092f + 2 * 12 * u;
                 float cx = w * 0.215f, cy = h * 0.868f;
                 r = new RectF(cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2);
-            } else if (v == hand) {
-                float hh = h * 0.115f;
-                r = new RectF(0, 0, hh * 40f / 44f, hh);
             } else {
-                int idx = -1;
-                for (int i = 0; i < tiles.length; i++) if (tiles[i] == v) idx = i;
-                r = idx < 0 ? new RectF() : slot(w, h, idx);
-                if (idx >= 0) r.inset(-room, -room);
+                r = new RectF();
             }
             return new Rect(Math.round(r.left), Math.round(r.top), Math.round(r.right), Math.round(r.bottom));
         }
