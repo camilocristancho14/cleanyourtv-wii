@@ -28,9 +28,20 @@ public class HomeKeyService extends AccessibilityService {
     private Map<Integer, String> appKeys = Collections.emptyMap();
     private Map<Integer, String> appScancodes = Collections.emptyMap();
 
+    /** The connected service, for the Alexa bridge's lock-screen and background-launch actions. */
+    static volatile HomeKeyService instance;
+
+    @Override
+    public boolean onUnbind(Intent intent) {
+        if (instance == this) instance = null;
+        return super.onUnbind(intent);
+    }
+
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
+        instance = this;
+        AlexaBridgeService.start(this);
         settingsScancodes = getResources().getIntArray(R.array.settings_key_scancodes);
         // Keycodes and the panel choice can also come from a theme; theme.sh restarts this service.
         Config config = Config.load(this);
