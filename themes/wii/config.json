@@ -1,0 +1,8 @@
+{
+  "wii_style": true,
+  "hidden_apps": ["com.mediatek.wwtv.tvcenter", "com.mediatek.tv.oneworld.tvcenter", "com.mitv.gallery"],
+  "live_tv_package": "com.mediatek.tv.oneworld.tvcenter",
+  "reduced_motion": false,
+  "background_color": "#EDEEF0",
+  "wallpaper": false
+}

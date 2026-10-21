@@ -18,6 +18,7 @@ powershell -ExecutionPolicy Bypass -File tools\theme.ps1 -TvHost 192.168.1.50 th
 | `aurora/` | A dark aurora wallpaper (teal and violet on navy, darker at the bottom) with a matching background colour |
 | `dussehra/` | Festive skin for Dussehra (ends 21 Oct 2026): a marigold toran, a faint gold rangoli, a diya for Wi-Fi, a bell for Inputs, a marigold for Settings and a petal shower |
 | `scenes/` | 14 dark illustrated landscapes in `wallpapers/`, a new one every hour; drawn from code by `tools/scenes_wallpapers.py` |
+| `wii/` | A Nintendo Wii menu look: light grey page, 4x3 channel tiles, a curved bottom bar with a digital clock and Spanish date, an Entradas dialog for HDMI 1 to 4 and Live TV (`wii_style`) |
 | `six-columns/` | Six smaller tiles per row and one grid row visible under the dock |
 
 ## Keys
@@ -27,6 +28,7 @@ is ignored, and a file that doesn't parse is ignored as a whole, so a theme can 
 
 | Key | Type | Meaning |
 |---|---|---|
+| `wii_style` | bool | The Wii menu home instead of the dock layout: 12 channel tiles a page (4 columns, 3 rows), a curved bar with a clock, a wiiOS button (Settings; long-press opens Launcher settings), an SD button (opens the File Manager if installed) and an Entradas button for the HDMI inputs and Live TV. Most other layout keys do not apply; `hidden_apps`, `live_tv_package` and `app_labels` do. Built-in default is `true`; the `default/` theme turns it off |
 | `dock_apps` | list of package names | The dock row, in order; missing apps are skipped |
 | `fill_dock` | bool | Fill the dock slots `dock_apps` leaves free with the first grid apps (true by default); false leaves them empty |
 | `hidden_apps` | list of package names | Never shown as tiles |

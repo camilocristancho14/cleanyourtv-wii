@@ -22,11 +22,12 @@
     <!-- Apps never shown as tiles (e.g. the Live TV app, which the Inputs menu already covers). -->
     <string-array name="hidden_apps">
         <item>com.mediatek.wwtv.tvcenter</item>
+        <item>com.mediatek.tv.oneworld.tvcenter</item>
         <item>com.mitv.gallery</item>
     </string-array>
 
     <!-- The TV's Live TV / tuner app, offered at the end of the Inputs menu. Leave empty to omit. -->
-    <string name="live_tv_package" translatable="false">com.mediatek.wwtv.tvcenter</string>
+    <string name="live_tv_package" translatable="false">com.mediatek.tv.oneworld.tvcenter</string>
 
     <!-- Some TVs give their Live TV app no leanback entry point at all, so `live_tv_package` above
          resolves to nothing (TCL Android TV 9 on China-market sets is one). This action is then sent
@@ -111,6 +112,10 @@
          shelf above it. false makes the dock apps simply the first tiles of one plain grid (still in dock_apps
          order, no empty slots), with names under every tile and the glow behind every focused tile. -->
     <bool name="dock_row">true</bool>
+    <!-- The Nintendo Wii menu look instead of the Apple TV one: a light page of 4x3 channels, a curved bottom bar
+         with a clock and date, a wiiOS button (Settings), an SD button (file manager) and an Entradas button
+         (HDMI inputs and Live TV). Themes can set "wii_style" (themes/wii). -->
+    <bool name="wii_style">true</bool>
     <!-- A reorder button (two arrows) in the top bar. Off by default: reordering is also in the Settings
          button's long-press menu, so it needs no extra button on screen. -->
     <bool name="reorder_button">false</bool>

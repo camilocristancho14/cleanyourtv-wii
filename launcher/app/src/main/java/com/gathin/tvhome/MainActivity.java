@@ -91,6 +91,8 @@ import java.util.Set;
 public class MainActivity extends Activity implements AppAdapter.TileListener {
 
     private static final int LAUNCHER_SETTINGS_REQUEST = 42;
+    /** The Wii menu controller; null in the Apple TV style. */
+    private WiiHome wii;
     /** Sent by QuickSettingsActivity: open Launcher settings from here so Home rebuilds when they close. */
     static final String ACTION_LAUNCHER_SETTINGS = "com.gathin.tvhome.action.LAUNCHER_SETTINGS";
     /** Tiles per row and dock slots (res/values/config.xml, columns). Set in onCreate. */
@@ -301,7 +303,6 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_main);
         density = getResources().getDisplayMetrics().density;
         // config.xml, overlaid by config.json from a pushed theme (see Config and tools/theme.sh).
         Config cfg = Config.load(this);
@@ -320,6 +321,17 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         inputAction = cfg.inputAction;
         sourcePanelService = cfg.sourcePanelService;
         sourcePanelAction = cfg.sourcePanelAction;
+
+        if (cfg.wiiStyle) {
+            // The Wii menu is a different screen on the same HOME activity, so Home, theme.sh and
+            // set-home-activity all keep working; none of the Apple TV views below exist in this mode.
+            wii = new WiiHome(this, cfg);
+            setContentView(wii.view());
+            getWindow().setBackgroundDrawable(null);
+            if (savedInstanceState == null) openLauncherSettingsIfAsked(getIntent());
+            return;
+        }
+        setContentView(R.layout.activity_main);
 
         root = findViewById(R.id.root);
         root.setBackgroundColor(cfg.backgroundColor);
@@ -596,6 +608,14 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         if (savedInstanceState == null) openLauncherSettingsIfAsked(getIntent());
     }
 
+    String liveTvPackage() {
+        return liveTvPkg;
+    }
+
+    void openLauncherSettings() {
+        startActivityForResult(new Intent(this, LauncherSettingsActivity.class), LAUNCHER_SETTINGS_REQUEST);
+    }
+
     private boolean openLauncherSettingsIfAsked(Intent intent) {
         if (intent == null || !ACTION_LAUNCHER_SETTINGS.equals(intent.getAction())) return false;
         setIntent(new Intent(Intent.ACTION_MAIN));
@@ -613,6 +633,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         super.onNewIntent(intent);
         if (openLauncherSettingsIfAsked(intent)) return;
         if (intent == null || !intent.hasCategory(Intent.CATEGORY_HOME)) return;
+        if (wii != null) {
+            wii.onHome();
+            return;
+        }
         grid.scrollToPosition(0);
         lastFocused = 0;
         lastFocusedKey = adapter.getItemCount() > 0 ? adapter.keyAt(0) : null;
@@ -628,6 +652,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     @Override
     protected void onStart() {
         super.onStart();
+        if (wii != null) {
+            wii.onStart();
+            return;
+        }
         stopped = false;
         started = true;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -643,6 +671,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     @Override
     protected void onResume() {
         super.onResume();
+        if (wii != null) {
+            wii.onResume();
+            return;
+        }
         // A festival that started or ended while Home was in the background: rebuild with or without it.
         if (festive != festival.active(LocalDate.now())) {
             recreate();
@@ -773,7 +805,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     @Override
     public void onUserInteraction() {
         super.onUserInteraction();
-        restartIdleClock();
+        if (wii == null) restartIdleClock();
     }
 
     private void restartIdleClock() {
@@ -784,6 +816,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     @Override
     protected void onPause() {
         super.onPause();
+        if (wii != null) {
+            wii.onPause();
+            return;
+        }
         root.removeCallbacks(showIdleClock);
         endReorder();   // Home or another app while reordering keeps the order so far
         wallpaperPlayer.stop();
@@ -804,6 +840,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     @Override
     protected void onStop() {
         super.onStop();
+        if (wii != null) {
+            wii.onStop();
+            return;
+        }
         started = false;
         unregisterReceiver(packageReceiver);
         unregisterReceiver(timeReceiver);
@@ -820,6 +860,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     @Override
     public void onTrimMemory(int level) {
         super.onTrimMemory(level);
+        if (wii != null) return;
         // RUNNING_LOW and CRITICAL also arrive while Home is visible when an accessibility service keeps the
         // process in the foreground; never blank the screen the owner is looking at.
         boolean due = level >= TRIM_MEMORY_BACKGROUND
@@ -838,6 +879,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
+        if (wii != null) return;
         if (hasFocus) {
             if (libraryFocusPending && appLibrary == null) focusLibrary();
             showCardPrompt();
@@ -847,6 +889,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        if (wii != null) return;
         wallpaperPlayer.close();
         ConnectivityManager cm = getSystemService(ConnectivityManager.class);
         TvInputManager tim = (TvInputManager) getSystemService(TV_INPUT_SERVICE);
@@ -1139,7 +1182,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
 
     @Override
     public void onBackPressed() {
-        // Home screen: Back goes nowhere.
+        // Home screen: Back goes nowhere (in the Wii menu it only closes the Entradas dialog).
+        if (wii != null) wii.onBack();
     }
 
     // ---- glass highlight -------------------------------------------------------------------------
@@ -2172,7 +2216,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
      * settings app (com.xiaomi.mitv.settings) there, so the Settings and Wi-Fi pills keep working.
      * On firmware with a standard settings handler the behaviour is unchanged.
      */
-    private Intent systemIntent(String standardAction) {
+    Intent systemIntent(String standardAction) {
         Intent i = new Intent(standardAction);
         if (i.resolveActivity(getPackageManager()) != null) return i;
         i = new Intent().setComponent(new ComponentName(
@@ -2198,7 +2242,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     }
 
     /** The Live TV app's launch intent: its leanback entry point, or the configured action if it has none. */
-    private Intent liveTvIntent() {
+    Intent liveTvIntent() {
         if (liveTvPkg.isEmpty()) return null;
         Intent i = getPackageManager().getLeanbackLaunchIntentForPackage(liveTvPkg);
         if (i != null || liveTvAction.isEmpty()) return i;
@@ -2223,7 +2267,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         }
     }
 
-    private void open(Intent i) {
+    void open(Intent i) {
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         try {
             startActivity(i);
@@ -2235,7 +2279,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     /** Switches to a passthrough input (HDMI, AV). The standard way is ACTION_VIEW on its channel URI,
      *  which the Live TV app handles; where nothing takes that, the configured `input_action` is sent
      *  with the same URI instead (XGIMI's HDMI player only answers com.xgimi.action.hdmiPlayer). */
-    private void openInput(String inputId) {
+    void openInput(String inputId) {
         Uri uri = TvContract.buildChannelUriForPassthroughInput(inputId);
         Intent view = new Intent(Intent.ACTION_VIEW).setDataAndType(uri, "vnd.android.cursor.item/channel")
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);

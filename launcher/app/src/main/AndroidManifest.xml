@@ -32,6 +32,9 @@
         </intent>
         <!-- China-market MIUI TV firmware: the Settings and Wi-Fi pills fall back to Xiaomi's settings app. -->
         <package android:name="com.xiaomi.mitv.settings" />
+        <!-- Wii menu (wii_style): the SD button opens this file manager, and Entradas starts the Live TV app. -->
+        <package android:name="com.alphainventor.filemanager" />
+        <package android:name="com.mediatek.tv.oneworld.tvcenter" />
     </queries>
 
     <application
