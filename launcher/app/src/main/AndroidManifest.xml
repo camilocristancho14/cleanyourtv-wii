@@ -129,7 +129,8 @@
             </intent-filter>
         </service>
 
-        <!-- Wii-menu screensaver: `settings put secure screensaver_components com.gathin.tvhome/.WiiDream`. -->
+        <!-- Video screensaver: `settings put secure screensaver_components com.gathin.tvhome/.WiiDream`.
+             Plays getExternalFilesDir(null)/screensaver.mp4, muted and looping; black if the file is missing. -->
         <service
             android:name=".WiiDream"
             android:label="@string/dream_wii_name"

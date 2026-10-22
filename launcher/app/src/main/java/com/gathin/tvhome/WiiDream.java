@@ -1,111 +1,162 @@
 package com.gathin.tvhome;
 
-import android.content.BroadcastReceiver;
-import android.content.Context;
-import android.content.Intent;
-import android.content.IntentFilter;
-import android.graphics.drawable.GradientDrawable;
-import android.os.Build;
+import android.graphics.Color;
+import android.media.MediaPlayer;
 import android.service.dreams.DreamService;
-import android.text.format.DateFormat;
+import android.util.Log;
+import android.view.SurfaceHolder;
+import android.view.SurfaceView;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 
-import java.util.Calendar;
+import java.io.File;
 
 /**
- * Screensaver "Wii Menu", as the Wii's own Screen Burn-in Reduction: the Wii had no clock screensaver, it simply
- * dimmed the menu it was showing. So this is the Wii menu itself (the owner's tiles in their order, first page, the
- * tray with its buttons, the live clock and date, dark from 16:00 to 07:00) still, with no cursor or glow, under a
- * gray veil that fades in and breathes very slightly (WiiDim). The whole menu moves a few pixels every few minutes
- * and nothing else moves. Dimmed, silent, not interactive: any key wakes the TV.
+ * Screensaver "Video" (same component as the old Wii-menu dream): a muted, looping fullscreen video from
+ * getExternalFilesDir(null)/screensaver.mp4, the same external-files pattern as WiiMusic's music.mp3.
+ * SurfaceView (not a TextureView) so the TV's decoder can composite the frame directly. Scaled to fill the
+ * screen, cropping rather than letterboxing. Any key or touch exits because the dream is not interactive.
+ * No file, or a file that will not play: a plain black screen. The player is released when the dream stops.
  */
 public class WiiDream extends DreamService {
 
-    private WiiViews.Root root;
-    private WiiViews.Veil veil;
-    private GradientDrawable under;
-    private float u;
-    private boolean registered;
+    private static final String FILE_NAME = "screensaver.mp4";
 
-    private final BroadcastReceiver timeReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            update();
-        }
-    };
+    private FrameLayout frame;
+    private SurfaceView surfaceView;
+    private MediaPlayer player;
+    private boolean dreaming;
+    private boolean surfaceReady;
 
     @Override
     public void onAttachedToWindow() {
         super.onAttachedToWindow();
-        setInteractive(false);   // any key wakes the TV back to where it was
+        setInteractive(false);   // any key or touch wakes the TV back to where it was
         setFullscreen(true);
-        setScreenBright(false);
-        int screenH = getResources().getDisplayMetrics().heightPixels;
-        u = screenH / 1080f;
-        root = new WiiViews.Root(this, screenH, getResources().getFont(R.font.outfit_medium));
-        root.setDark(WiiTime.isNightNow());
-        AppAdapter apps = WiiMenu.apps(this, null, Config.load(this));
-        WiiMenu.reload(this, apps);
-        WiiMenu.still(root, apps, WiiMenu.layout(this, apps, false));
-        FrameLayout frame = new FrameLayout(this);
-        // Shows in the few pixels the shifted menu uncovers at the screen edge.
-        under = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, new int[] {0, 0});
-        frame.setBackground(under);
-        frame.addView(root, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        veil = new WiiViews.Veil(this);
-        frame.addView(veil, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        setScreenBright(true);   // a video, not the old dimmed menu
+        frame = new FrameLayout(this);
+        frame.setBackgroundColor(Color.BLACK);
+        File video = videoFile();
+        if (video != null) {
+            surfaceView = new SurfaceView(this);
+            surfaceView.setFocusable(false);
+            surfaceView.getHolder().addCallback(new SurfaceHolder.Callback() {
+                @Override
+                public void surfaceCreated(SurfaceHolder holder) {
+                    surfaceReady = true;
+                    if (dreaming) startPlayback();
+                }
+
+                @Override
+                public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) { }
+
+                @Override
+                public void surfaceDestroyed(SurfaceHolder holder) {
+                    surfaceReady = false;
+                    releasePlayer();
+                }
+            });
+            frame.addView(surfaceView, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        } else {
+            Log.i("WiiDream", "WiiDream: screensaver.mp4 missing, black screen");
+        }
         setContentView(frame);
-        update();
     }
 
     @Override
     public void onDreamingStarted() {
         super.onDreamingStarted();
-        IntentFilter f = new IntentFilter(Intent.ACTION_TIME_TICK);
-        f.addAction(Intent.ACTION_TIME_CHANGED);
-        f.addAction(Intent.ACTION_TIMEZONE_CHANGED);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) registerReceiver(timeReceiver, f, Context.RECEIVER_NOT_EXPORTED);
-        else registerReceiver(timeReceiver, f);
-        registered = true;
-        veil.start(root.isDark());
-        update();
+        dreaming = true;
+        startPlayback();
     }
 
     @Override
     public void onDreamingStopped() {
-        stop();
+        dreaming = false;
+        releasePlayer();
         super.onDreamingStopped();
     }
 
     @Override
     public void onDetachedFromWindow() {
-        stop();
+        dreaming = false;
+        releasePlayer();
         super.onDetachedFromWindow();
     }
 
-    private void stop() {
-        if (veil != null) veil.stop();
-        if (registered) {
-            unregisterReceiver(timeReceiver);
-            registered = false;
+    /** Starts the loop as soon as the dream and the surface are both up. Missing file: leave the black frame. */
+    private void startPlayback() {
+        if (!dreaming || player != null || !surfaceReady || surfaceView == null) return;
+        File file = videoFile();
+        if (file == null) return;
+        SurfaceHolder holder = surfaceView.getHolder();
+        if (holder.getSurface() == null || !holder.getSurface().isValid()) return;
+        MediaPlayer mp = new MediaPlayer();
+        try {
+            mp.setDisplay(holder);
+            cropToScreen(mp);
+            mp.setDataSource(file.getAbsolutePath());
+            mp.setLooping(true);
+            mp.setVolume(0f, 0f);
+            mp.setOnPreparedListener(p -> {
+                if (player != p || !dreaming) return;
+                p.setLooping(true);
+                p.setVolume(0f, 0f);
+                cropToScreen(p);
+                try {
+                    p.start();
+                    p.setVolume(0f, 0f);
+                    Log.i("WiiDream", "WiiDream: screensaver video loaded: screensaver.mp4");
+                } catch (Throwable t) {
+                    Log.w("WiiDream", "WiiDream: screensaver video failed", t);
+                    releasePlayer();
+                }
+            });
+            mp.setOnErrorListener((p, what, extra) -> {
+                Log.w("WiiDream", "WiiDream: screensaver video failed (" + what + "," + extra + ")");
+                releasePlayer();
+                return true;
+            });
+            player = mp;
+            mp.prepareAsync();
+        } catch (Throwable t) {
+            Log.w("WiiDream", "WiiDream: screensaver video failed", t);
+            try {
+                mp.release();
+            } catch (Throwable ignored) { }
+            if (player == mp) player = null;
         }
     }
 
-    /** On start and every minute: the time, the date, dark or light, and the menu's pixel-shift spot. */
-    private void update() {
-        Calendar now = Calendar.getInstance();
-        root.clock.setTime(now.get(Calendar.HOUR_OF_DAY), now.get(Calendar.MINUTE), DateFormat.is24HourFormat(this));
-        root.date.setText(WiiTime.date(now.get(Calendar.DAY_OF_WEEK), now.get(Calendar.DAY_OF_MONTH), now.get(Calendar.MONTH) + 1));
-        boolean dark = WiiTime.isNightNow();
-        if (dark != root.isDark()) {
-            root.setDark(dark);
-            veil.setNight(dark);
+    /** Fill the screen and keep the picture's shape; a device that cannot crop still stretches to the surface. */
+    private static void cropToScreen(MediaPlayer mp) {
+        try {
+            mp.setVideoScalingMode(MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING);
+        } catch (Throwable ignored) { }
+    }
+
+    /** getExternalFilesDir(null)/screensaver.mp4 (pushed with adb), if there and non-empty; otherwise null. */
+    private File videoFile() {
+        try {
+            File dir = getExternalFilesDir(null);
+            if (dir == null) return null;
+            File f = new File(dir, FILE_NAME);
+            if (!f.isFile() || f.length() <= 0) return null;
+            return f;
+        } catch (Throwable t) {
+            return null;
         }
-        WiiViews.Palette p = root.look.p;
-        under.setColors(new int[] {p.backTop, p.backBottom});
-        int[] shift = WiiDim.shift(veil.minutes(), Math.max(1, Math.round(WiiDim.SHIFT_PX * u)));
-        root.setTranslationX(shift[0]);
-        root.setTranslationY(shift[1]);
+    }
+
+    private void releasePlayer() {
+        MediaPlayer p = player;
+        player = null;
+        if (p == null) return;
+        try { p.setOnPreparedListener(null); } catch (Throwable ignored) { }
+        try { p.setOnErrorListener(null); } catch (Throwable ignored) { }
+        try { p.setOnCompletionListener(null); } catch (Throwable ignored) { }
+        try { p.setDisplay(null); } catch (Throwable ignored) { }
+        try { p.release(); } catch (Throwable ignored) { }
     }
 }

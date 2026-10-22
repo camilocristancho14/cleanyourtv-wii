@@ -1,9 +1,9 @@
 package com.gathin.tvhome;
 
 /**
- * The Wii's Screen Burn-in Reduction, kept free of Android so it runs as plain JVM tests: after a while with no
- * input the console just dims the screen it is showing under a gray veil, which breathes very slightly. The veil's
- * strength over time, and the few-pixel shift of the whole menu every few minutes, are worked out here.
+ * Home's Screen Burn-in Reduction, kept free of Android so it runs as plain JVM tests: after a while with no
+ * input the menu dims under a gray veil, which breathes very slightly. The veil's strength over time is worked
+ * out here. The system screensaver is a video (WiiDream), not this veil.
  */
 final class WiiDim {
     private WiiDim() { }
@@ -16,11 +16,6 @@ final class WiiDim {
     static final float PULSE = 0.04f;
     /** Steps of the pulse while fading in (smooth), and after (one veil level every few steps is plenty). */
     static final long FADE_STEP_MS = 33L, PULSE_STEP_MS = 250L;
-    /** The menu moves to the next pixel-shift spot every SHIFT_EVERY_MIN minutes, at most SHIFT_PX (at 1080p) away. */
-    static final int SHIFT_EVERY_MIN = 3, SHIFT_PX = 4;
-
-    /** Unit offsets of the shift spots, walked in order: the centre, then a ring around it. */
-    private static final int[][] SPOTS = {{0, 0}, {1, 0}, {1, 1}, {0, 1}, {-1, 1}, {-1, 0}, {-1, -1}, {0, -1}, {1, -1}};
 
     static float base(boolean night) {
         return night ? NIGHT_ALPHA : DAY_ALPHA;
@@ -45,11 +40,5 @@ final class WiiDim {
 
     static long stepMs(long elapsedMs) {
         return elapsedMs < FADE_MS ? FADE_STEP_MS : PULSE_STEP_MS;
-    }
-
-    /** The menu's offset {dx, dy} in pixels this many minutes after dimming started; maxPx is the ring's radius. */
-    static int[] shift(long minutes, int maxPx) {
-        int[] s = SPOTS[(int) (Math.max(0, minutes) / SHIFT_EVERY_MIN % SPOTS.length)];
-        return new int[] {s[0] * maxPx, s[1] * maxPx};
     }
 }

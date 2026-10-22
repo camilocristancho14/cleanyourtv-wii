@@ -1050,11 +1050,6 @@ final class WiiViews {
             return on;
         }
 
-        /** Whole minutes since the veil started (the pixel shift's clock). */
-        long minutes() {
-            return on ? (android.os.SystemClock.uptimeMillis() - since) / 60_000L : 0;
-        }
-
         void start(boolean dark) {
             setNight(dark);
             since = android.os.SystemClock.uptimeMillis();

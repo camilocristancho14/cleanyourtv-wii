@@ -378,6 +378,7 @@ The **TV** needs Android 8.0 (API 26) or newer: `minSdk` is a compile-time floor
 | **App library** | Optional: browse every installed app and add or remove Home shortcuts. See [the app library guide](docs/app-library.md) |
 | **Module cards** | Any TV app can offer its own tile; you approve each one once. See [`docs/modules.md`](docs/modules.md) |
 | **Clock screensaver** | A drifting clock over the glow, so nothing burns in |
+| **Video screensaver** | `WiiDream` plays `screensaver.mp4` muted and looping, scaled to fill the screen. Black if the file is missing |
 | **Remote keys** | Keeps the Input, YouTube and gear buttons working after the stock launcher is gone |
 
 <details>
@@ -451,19 +452,20 @@ tools/tv.py 'settings put secure screensaver_components com.gathin.tvhome/.Clock
 </details>
 
 <details>
-<summary><b>Wii menu: dark mode and the Wii Menu screensaver</b></summary>
+<summary><b>Wii menu: dark mode and the video screensaver</b></summary>
 
 - The Wii menu (`wii_style`) turns dark by itself from 16:00 to 07:00 in the TV's time zone and light again
   at 07:00. It checks on every minute tick and when Home comes back, and re-colours in place.
 - To try either look without touching the clock: `adb shell setprop debug.wiitv.night 1` (dark) or `0`
   (light); `adb shell setprop debug.wiitv.night ""` goes back to automatic. It applies within a minute, or at once
   when Home is reopened. The property is not kept across reboots.
-- "Wii Menu" screensaver (`WiiDream`), like the Wii's own Screen Burn-in Reduction (the Wii had no clock
-  screensaver, it just dimmed the menu): the Wii menu itself, still (your tiles in your order, first page, the tray
-  and its buttons, the live clock and date, dark at night), with no cursor, under a gray veil that fades in over 2 s
-  and breathes very slightly. The whole menu shifts a few pixels every 3 minutes; nothing else moves. Dimmed screen,
-  no sound; any key wakes the TV. Set it with
-  `adb shell settings put secure screensaver_components com.gathin.tvhome/.WiiDream`. The Clock screensaver is still there.
+- Video screensaver (`WiiDream`, listed as "Video"): `screensaver.mp4` from the app's external files directory,
+  muted, looping, scaled to fill the screen. It starts as soon as the screensaver does. Any key or touch wakes
+  the TV. If the file is missing or will not play, the screen stays black. The Clock screensaver is still there.
+  Set it with `adb shell settings put secure screensaver_components com.gathin.tvhome/.WiiDream`.
+
+      adb push screensaver.mp4 /sdcard/Android/data/com.gathin.tvhome/files/screensaver.mp4
+
 - The Wii menu also dims itself after 5 minutes with no key (`wii_dim_minutes` in `res/values/config.xml`, 0 turns
   it off). The first key only brightens it again; it does not move the cursor or open anything.
 - In dark mode, banners made for a white tile (white, near-white or transparent edges, e.g. Netflix, YouTube,
@@ -733,3 +735,11 @@ Home plays `music.mp3` from the app's external files dir instead of the bundled 
     adb push music/wii_menu.mp3 /sdcard/Android/data/com.gathin.tvhome/files/music.mp3
 
 The MP3 lives in `music/` in the repo and is not bundled in the APK.
+
+## Video screensaver (2.11)
+
+The "Video" screensaver (`WiiDream`) plays `screensaver.mp4` from that same external files directory,
+muted and looping, scaled to fill the screen. Any key or touch wakes the TV. If the file is missing
+or will not play, the screen stays black. The video is not bundled in the APK:
+
+    adb push screensaver.mp4 /sdcard/Android/data/com.gathin.tvhome/files/screensaver.mp4

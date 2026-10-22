@@ -2,14 +2,10 @@ package com.gathin.tvhome;
 
 import org.junit.Test;
 
-import java.util.HashSet;
-import java.util.Set;
-
-import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
-/** Plain JVM tests for the Screen Burn-in Reduction veil (fade in, breath) and the pixel shift of the dimmed menu. */
+/** Plain JVM tests for Home's Screen Burn-in Reduction veil (fade in, breath). */
 public class WiiDimTest {
 
     @Test
@@ -56,27 +52,5 @@ public class WiiDimTest {
         assertEquals(0, WiiDim.level(-0.1f));
         assertEquals(128, WiiDim.level(0.5f));
         assertEquals(255, WiiDim.level(1.2f));
-    }
-
-    @Test
-    public void shiftStaysPutForThreeMinutesThenMoves() {
-        assertArrayEquals(new int[] {0, 0}, WiiDim.shift(0, 4));
-        assertArrayEquals(new int[] {0, 0}, WiiDim.shift(2, 4));
-        assertArrayEquals(new int[] {4, 0}, WiiDim.shift(3, 4));
-        assertArrayEquals(new int[] {4, 4}, WiiDim.shift(6, 4));
-        assertArrayEquals(new int[] {0, 0}, WiiDim.shift(-5, 4));
-    }
-
-    @Test
-    public void shiftVisitsNineSpotsWithinTheRadiusAndRepeats() {
-        Set<String> spots = new HashSet<>();
-        long cycle = 9L * WiiDim.SHIFT_EVERY_MIN;
-        for (long m = 0; m < cycle; m++) {
-            int[] s = WiiDim.shift(m, 4);
-            assertTrue(Math.abs(s[0]) <= 4 && Math.abs(s[1]) <= 4);
-            spots.add(s[0] + "," + s[1]);
-            assertArrayEquals(s, WiiDim.shift(m + cycle, 4));
-        }
-        assertEquals(9, spots.size());
     }
 }
