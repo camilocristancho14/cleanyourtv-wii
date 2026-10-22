@@ -847,19 +847,18 @@ final class WiiViews {
     }
 
     /**
-     * A paging arrow, as on the Wii: a glossy light-blue triangle in a rounded gray tab flush with the screen edge,
-     * over the sliver of the next or previous page. Dark-gray tab at night, same blue triangle. Never focusable.
+     * A paging arrow, as on the Wii: a glossy light-blue triangle with a white border, no tab
+     * behind it, over the sliver of the next or previous page. Same in both themes. Never focusable.
      */
     static final class Arrow extends View {
         static final int BLUE_HI = 0xFFE4FBFF, BLUE_MID = 0xFF8FDDFB, BLUE_LO = 0xFF3FB4EC, BLUE_EDGE = 0xFF2C7FC4;
         private final boolean left;
         private final float u;
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Path tab = new Path(), tri = new Path();
-        private final RectF rect = new RectF();
+        private final Path tri = new Path();
         private final Look look;
         private Palette built;
-        private LinearGradient tabFill, gloss;
+        private LinearGradient gloss;
         private RadialGradient triFill;
 
         Arrow(Context ctx, boolean left, float u, Look look) {
@@ -882,12 +881,7 @@ final class WiiViews {
         private void build() {
             Palette p = look.p;
             built = p;
-            float w = getWidth(), h = getHeight(), r = 26 * u;
-            tab.reset();
-            // Rounded on the screen side only; the far side runs past the edge.
-            rect.set(2 * u, 2 * u, w + 2 * r, h - 2 * u);
-            tab.addRoundRect(rect, r, r, Path.Direction.CW);
-            tabFill = new LinearGradient(0, 0, 0, h, p.tabTop, p.tabBottom, Shader.TileMode.CLAMP);
+            float w = getWidth(), h = getHeight();
             float th = Math.min(h * 0.5f, 78 * u), tw = th * 0.56f;
             float bx = w * 0.5f - tw * 0.42f, tx = bx + tw, cy = h / 2, top = cy - th / 2, bot = cy + th / 2;
             tri.reset();
@@ -908,23 +902,7 @@ final class WiiViews {
             float w = getWidth(), h = getHeight();
             c.save();
             if (left) c.scale(-1, 1, w / 2, 0);
-            paint.setStyle(Paint.Style.FILL);
-            paint.setShader(tabFill);
-            c.drawPath(tab, paint);
-            paint.setShader(null);
-            // Faint lines like the backdrop's, then a light rim outside a darker one.
-            c.save();
-            c.clipPath(tab);
-            paint.setColor(look.p.lines);
-            for (float y = 3 * u; y < h; y += 5 * u) c.drawRect(0, y, w, y + 1.5f * u, paint);
-            c.restore();
             paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(5 * u);
-            paint.setColor(look.p.tabShine);
-            c.drawPath(tab, paint);
-            paint.setStrokeWidth(2.2f * u);
-            paint.setColor(look.p.tabRim);
-            c.drawPath(tab, paint);
             // The triangle: white border, blue outline, glossy light-blue body.
             paint.setStrokeJoin(Paint.Join.ROUND);
             paint.setStrokeWidth(9 * u);
