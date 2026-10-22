@@ -87,7 +87,7 @@ final class WiiViews {
         final int buttonHi, buttonLo, ring, specular, glyph, shadow;
         final int cardTop, cardBottom, cardBand, cardEdge, cardText;
         final int clock, clockEdge, text, suffix;
-        final int arrowFill, arrowEdge;
+        final int tabTop, tabBottom, tabRim, tabShine;
         final int scrim, panelTop, panelBottom, panelEdge, pillTop, pillBottom, pillEdge, pillText;
 
         private Palette(int[] c) {
@@ -99,7 +99,7 @@ final class WiiViews {
             buttonHi = c[i++]; buttonLo = c[i++]; ring = c[i++]; specular = c[i++]; glyph = c[i++]; shadow = c[i++];
             cardTop = c[i++]; cardBottom = c[i++]; cardBand = c[i++]; cardEdge = c[i++]; cardText = c[i++];
             clock = c[i++]; clockEdge = c[i++]; text = c[i++]; suffix = c[i++];
-            arrowFill = c[i++]; arrowEdge = c[i++];
+            tabTop = c[i++]; tabBottom = c[i++]; tabRim = c[i++]; tabShine = c[i++];
             scrim = c[i++]; panelTop = c[i++]; panelBottom = c[i++]; panelEdge = c[i++];
             pillTop = c[i++]; pillBottom = c[i++]; pillEdge = c[i++]; pillText = c[i];
         }
@@ -112,7 +112,7 @@ final class WiiViews {
                 0xFFFFFFFF, 0xFFD3D5D8, 0xFF3DB4E8, 0x99FFFFFF, 0xFF9A9CA0, 0x33000000,
                 0xFFFFFFFF, 0xFFE3F2FA, 0xFF5BC0EC, 0xFF3AA9DE, 0xFF49B3E5,
                 0xFF96989C, 0xFF808286, GRAY_TEXT, 0xFF8E9094,
-                0xFFFFFFFF, 0xFF4FB2E8,
+                0xFFEBEBEB, 0xFFD5D5D5, 0xFFBDBDBD, 0xFFF4F4F4,
                 0x78F2F4F6, 0xE6FFFFFF, 0xD9E4E8EB, 0xFFB3D5E6,
                 0xFFFFFFFF, 0xFFEFF0F1, 0xFF9FA3A7, 0xFF3E4043,
         });
@@ -125,7 +125,7 @@ final class WiiViews {
                 0xFF5A5E64, 0xFF33363A, 0xFF3DB4E8, 0x22FFFFFF, 0xFFC9CCD0, 0x66000000,
                 0xFF4A535B, 0xFF2F3A43, 0xFF2F8FC0, 0xFF3DB4E8, 0xFF8FD3F5,
                 0xFFC0C3C7, 0xFF9DA0A5, 0xFFC4C7CB, 0xFFB0B3B8,
-                0xFF3A3D42, 0xFF4FB2E8,
+                0xFF3E4146, 0xFF2E3135, 0xFF55595F, 0x26FFFFFF,
                 0x99101214, 0xF02C2F33, 0xF0202326, 0xFF3C6F8C,
                 0xFF3A3D42, 0xFF2E3135, 0xFF5A5E63, 0xFFE0E2E5,
         });
@@ -559,6 +559,61 @@ final class WiiViews {
         }
     }
 
+    /**
+     * Banners made for a white tile (white or transparent edges, see BannerTone), re-toned once for the dark tiles:
+     * the paper made transparent and dark lettering lifted. Cached per banner drawable, so each is analysed once; a
+     * banner that is not light maps to itself and costs only the 64x36 sample.
+     */
+    static final class DarkBanners {
+        private DarkBanners() { }
+
+        /** Largest re-toned bitmap, about a tile's width on a 1080p screen. */
+        static final int MAX_W = 400;
+        private static final java.util.Map<Drawable, Drawable> CACHE = new java.util.WeakHashMap<>();
+
+        static Drawable of(Context ctx, Drawable d) {
+            Drawable done = CACHE.get(d);
+            if (done == null) {
+                done = make(ctx, d);
+                CACHE.put(d, done);
+            }
+            return done;
+        }
+
+        private static Drawable make(Context ctx, Drawable d) {
+            int iw = d.getIntrinsicWidth(), ih = d.getIntrinsicHeight();
+            if (iw <= 0 || ih <= 0) return d;
+            int sw = 64, sh = Math.max(1, Math.round(64f * ih / iw));
+            int[] sample = pixels(d, sw, sh);
+            if (sample == null || !BannerTone.isLight(sample, sw, sh)) return d;
+            int paper = BannerTone.paper(sample, sw, sh);
+            int w = Math.min(iw, MAX_W), h = Math.max(1, Math.round((float) w * ih / iw));
+            int[] px = pixels(d, w, h);
+            if (px == null) return d;
+            BannerTone.forDark(px, paper);
+            Bitmap out = Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888);
+            return new android.graphics.drawable.BitmapDrawable(ctx.getResources(), out);
+        }
+
+        /** The drawable rendered at w x h, as ARGB pixels; null if it cannot be drawn. */
+        private static int[] pixels(Drawable d, int w, int h) {
+            Rect old = d.copyBounds();
+            try {
+                Bitmap bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+                d.setBounds(0, 0, w, h);
+                d.draw(new Canvas(bmp));
+                int[] px = new int[w * h];
+                bmp.getPixels(px, 0, w, 0, 0, w, h);
+                bmp.recycle();
+                return px;
+            } catch (RuntimeException | OutOfMemoryError e) {
+                return null;
+            } finally {
+                d.setBounds(old);
+            }
+        }
+    }
+
     /** A channel: a white rounded tile with a thin gray border, or an empty gray slot. */
     static final class Tile extends FrameLayout {
         private final float u, room, radius;
@@ -573,6 +628,8 @@ final class WiiViews {
         private final RectF rect = new RectF();
         private final Look look;
         private boolean empty = true;
+        /** The app's own banner; at night the tile shows DarkBanners.of(art) instead. */
+        private Drawable art;
 
         Tile(Context ctx, float u, Typeface font, Look look) {
             super(ctx);
@@ -630,6 +687,7 @@ final class WiiViews {
             border.setStroke(stroke, p.tileBorder);
             borderEmpty.setStroke(stroke, p.emptyBorder);
             label.setTextColor(p.label);
+            if (art != null) banner.setImageDrawable(p == Palette.DARK ? DarkBanners.of(getContext(), art) : art);
             card.invalidate();
         }
 
@@ -647,6 +705,7 @@ final class WiiViews {
             setContentDescription(null);
             card.setBackground(fillGray);
             card.setForeground(borderEmpty);
+            art = null;
             banner.setImageDrawable(null);
             banner.setVisibility(GONE);
             icon.setImageDrawable(null);
@@ -665,8 +724,9 @@ final class WiiViews {
             setContentDescription(e.label);
             card.setBackground(fillWhite);
             card.setForeground(border);
+            art = e.banner;
             if (e.banner != null) {
-                banner.setImageDrawable(e.banner);
+                banner.setImageDrawable(look.p == Palette.DARK ? DarkBanners.of(getContext(), e.banner) : e.banner);
                 banner.setVisibility(VISIBLE);
                 icon.setVisibility(GONE);
                 label.setVisibility(GONE);
@@ -786,13 +846,21 @@ final class WiiViews {
         @Override public int getOpacity() { return android.graphics.PixelFormat.TRANSLUCENT; }
     }
 
-    /** A paging arrow over the sliver of the next or previous page: white with a blue outline, never focusable. */
+    /**
+     * A paging arrow, as on the Wii: a glossy light-blue triangle in a rounded gray tab flush with the screen edge,
+     * over the sliver of the next or previous page. Dark-gray tab at night, same blue triangle. Never focusable.
+     */
     static final class Arrow extends View {
+        static final int BLUE_HI = 0xFFE4FBFF, BLUE_MID = 0xFF8FDDFB, BLUE_LO = 0xFF3FB4EC, BLUE_EDGE = 0xFF2C7FC4;
         private final boolean left;
         private final float u;
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Path path = new Path();
+        private final Path tab = new Path(), tri = new Path();
+        private final RectF rect = new RectF();
         private final Look look;
+        private Palette built;
+        private LinearGradient tabFill, gloss;
+        private RadialGradient triFill;
 
         Arrow(Context ctx, boolean left, float u, Look look) {
             super(ctx);
@@ -806,22 +874,72 @@ final class WiiViews {
         }
 
         @Override
+        protected void onSizeChanged(int w, int h, int ow, int oh) {
+            built = null;
+        }
+
+        /** Shapes in a right-hand tab (pointing right); onDraw mirrors them for the left one. */
+        private void build() {
+            Palette p = look.p;
+            built = p;
+            float w = getWidth(), h = getHeight(), r = 26 * u;
+            tab.reset();
+            // Rounded on the screen side only; the far side runs past the edge.
+            rect.set(2 * u, 2 * u, w + 2 * r, h - 2 * u);
+            tab.addRoundRect(rect, r, r, Path.Direction.CW);
+            tabFill = new LinearGradient(0, 0, 0, h, p.tabTop, p.tabBottom, Shader.TileMode.CLAMP);
+            float th = Math.min(h * 0.5f, 78 * u), tw = th * 0.56f;
+            float bx = w * 0.5f - tw * 0.42f, tx = bx + tw, cy = h / 2, top = cy - th / 2, bot = cy + th / 2;
+            tri.reset();
+            tri.moveTo(bx, top);
+            tri.lineTo(tx, cy);
+            tri.lineTo(bx, bot);
+            // The Wii's base bows in slightly.
+            tri.quadTo(bx + tw * 0.10f, cy, bx, top);
+            tri.close();
+            triFill = new RadialGradient(bx + tw * 0.2f, cy, tw * 1.05f,
+                    new int[] {BLUE_HI, BLUE_MID, BLUE_LO}, new float[] {0f, 0.5f, 1f}, Shader.TileMode.CLAMP);
+            gloss = new LinearGradient(0, top, 0, cy, 0x99FFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP);
+        }
+
+        @Override
         protected void onDraw(Canvas c) {
-            float inset = 5 * u, w = getWidth(), h = getHeight();
-            float tip = left ? inset : w - inset, base = left ? w - inset : inset;
-            path.reset();
-            path.moveTo(tip, h / 2);
-            path.lineTo(base, inset);
-            path.lineTo(base, h - inset);
-            path.close();
+            if (built != look.p) build();
+            float w = getWidth(), h = getHeight();
+            c.save();
+            if (left) c.scale(-1, 1, w / 2, 0);
             paint.setStyle(Paint.Style.FILL);
-            paint.setColor(look.p.arrowFill);
-            c.drawPath(path, paint);
+            paint.setShader(tabFill);
+            c.drawPath(tab, paint);
+            paint.setShader(null);
+            // Faint lines like the backdrop's, then a light rim outside a darker one.
+            c.save();
+            c.clipPath(tab);
+            paint.setColor(look.p.lines);
+            for (float y = 3 * u; y < h; y += 5 * u) c.drawRect(0, y, w, y + 1.5f * u, paint);
+            c.restore();
             paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(4 * u);
+            paint.setStrokeWidth(5 * u);
+            paint.setColor(look.p.tabShine);
+            c.drawPath(tab, paint);
+            paint.setStrokeWidth(2.2f * u);
+            paint.setColor(look.p.tabRim);
+            c.drawPath(tab, paint);
+            // The triangle: white border, blue outline, glossy light-blue body.
             paint.setStrokeJoin(Paint.Join.ROUND);
-            paint.setColor(look.p.arrowEdge);
-            c.drawPath(path, paint);
+            paint.setStrokeWidth(9 * u);
+            paint.setColor(0xF2FFFFFF);
+            c.drawPath(tri, paint);
+            paint.setStrokeWidth(4 * u);
+            paint.setColor(BLUE_EDGE);
+            c.drawPath(tri, paint);
+            paint.setStyle(Paint.Style.FILL);
+            paint.setShader(triFill);
+            c.drawPath(tri, paint);
+            paint.setShader(gloss);
+            c.drawPath(tri, paint);
+            paint.setShader(null);
+            c.restore();
         }
     }
 
@@ -997,10 +1115,9 @@ final class WiiViews {
             } else if (v == strip) {
                 r = new RectF(0, h * 0.045f - room, w, h * 0.675f + room);
             } else if (v == prev || v == next) {
-                // Centred on the middle row, over the sliver of the neighbouring page.
-                float aw = w * 0.032f, ah = h * 0.095f;
-                float cx = v == prev ? w * 0.037f : w * 0.963f;
-                r = new RectF(cx - aw / 2, h * 0.36f - ah / 2, cx + aw / 2, h * 0.36f + ah / 2);
+                // A tab flush with the screen edge, centred on the middle row, over the neighbouring page's sliver.
+                float aw = 84 * u, ah = 168 * u, cy = h * 0.36f;
+                r = v == prev ? new RectF(0, cy - ah / 2, aw, cy + ah / 2) : new RectF(w - aw, cy - ah / 2, w, cy + ah / 2);
             } else if (v == clock) {
                 r = new RectF(w * 0.33f, h * 0.700f, w * 0.67f, h * 0.812f);
             } else if (v == date) {

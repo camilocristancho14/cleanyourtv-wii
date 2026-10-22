@@ -460,6 +460,10 @@ tools/tv.py 'settings put secure screensaver_components com.gathin.tvhome/.Clock
   when Home is reopened. The property is not kept across reboots.
 - "Wii Menu" screensaver (`WiiDream`): the Wii backdrop (dark at night) with the seven-segment clock and
   the date gliding slowly around, dimmed; any key wakes the TV. The Clock screensaver is still there.
+- In dark mode, banners made for a white tile (white, near-white or transparent edges, e.g. Netflix, YouTube,
+  Play Store) are re-toned once and cached: the white paper turns transparent over the dark tile and black or gray
+  lettering is lifted to light gray. No app list; it works from the banner's pixels. Light mode is unchanged.
+- Page arrows (2.8): a glossy blue triangle in a rounded gray tab on the screen edge, dark gray at night.
 
 ```bash
 tools/tv.py 'settings put secure screensaver_components com.gathin.tvhome/.WiiDream; settings put secure screensaver_enabled 1'
