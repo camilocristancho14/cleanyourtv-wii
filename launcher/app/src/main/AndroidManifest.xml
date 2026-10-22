@@ -108,6 +108,21 @@
                 android:resource="@xml/home_key_service" />
         </service>
 
+        <!-- Wii channel: pick the clip WiiDream plays. Not a HOME activity. -->
+        <activity
+            android:name=".ScreensaverActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:screenOrientation="landscape" />
+        <!-- "Ver ahora": the same picture as WiiDream. Any key leaves. -->
+        <activity
+            android:name=".ScreensaverPreviewActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:screenOrientation="landscape"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen" />
+
         <!-- The same clock, started by Home itself after home_idle_clock_minutes without input. -->
         <activity
             android:name=".ClockActivity"
@@ -130,7 +145,9 @@
         </service>
 
         <!-- Video screensaver: `settings put secure screensaver_components com.gathin.tvhome/.WiiDream`.
-             Plays getExternalFilesDir(null)/screensaver.mp4, muted and looping; black if the file is missing. -->
+             Plays the clip chosen in the Protector de pantalla channel (screensavers/*.mp4, else
+             screensaver.mp4), muted and looping. Black if there is no file. The channel's switch off:
+             black, then the dream finishes. Does not change system timeouts. -->
         <service
             android:name=".WiiDream"
             android:label="@string/dream_wii_name"

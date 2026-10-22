@@ -25,11 +25,14 @@ final class WiiMenu {
         return apps;
     }
 
-    /** Reloads the installed TV apps (banners and all). */
+    /** Reloads the installed TV apps (banners and all), then pins the Protector de pantalla channel first. */
     static void reload(Context ctx, AppAdapter apps) {
         List<ResolveInfo> leanback = ctx.getPackageManager().queryIntentActivities(
                 new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER), 0);
         apps.reload(Collections.<Cards.Card>emptyList(), leanback);
+        apps.pinFirst(new AppAdapter.Entry(ctx.getString(R.string.screensaver_channel),
+                new ComponentName(ctx, ScreensaverActivity.class), null,
+                ctx.getDrawable(R.drawable.ic_screensaver)));
     }
 
     /** The slots as the owner arranged them (WiiLayout), new apps added, removed ones gone; saved back if it changed. */

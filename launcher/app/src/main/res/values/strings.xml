@@ -111,4 +111,14 @@
     <string name="last_opened">Last opened %1$s</string>
     <!-- Alexa bridge (docs/alexa-bridge.md): the low-priority notification that keeps the service alive. -->
     <string name="alexa_bridge_name">Alexa bridge</string>
+
+    <!-- Wii channel "Protector de pantalla". Spanish on every locale: the screen itself is Spanish. -->
+    <string name="screensaver_channel" translatable="false">Protector de pantalla</string>
+    <string name="screensaver_enabled" translatable="false">Protector de pantalla activado</string>
+    <string name="screensaver_on" translatable="false">Activado</string>
+    <string name="screensaver_off" translatable="false">Desactivado</string>
+    <string name="screensaver_black" translatable="false">Pantalla negra</string>
+    <string name="screensaver_preview" translatable="false">Ver ahora</string>
+    <string name="screensaver_pick" translatable="false">Elige un video</string>
+    <string name="screensaver_empty" translatable="false">No hay videos .mp4 en screensavers</string>
 </resources>

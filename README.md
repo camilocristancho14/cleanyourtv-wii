@@ -378,7 +378,7 @@ The **TV** needs Android 8.0 (API 26) or newer: `minSdk` is a compile-time floor
 | **App library** | Optional: browse every installed app and add or remove Home shortcuts. See [the app library guide](docs/app-library.md) |
 | **Module cards** | Any TV app can offer its own tile; you approve each one once. See [`docs/modules.md`](docs/modules.md) |
 | **Clock screensaver** | A drifting clock over the glow, so nothing burns in |
-| **Video screensaver** | `WiiDream` plays `screensaver.mp4` muted and looping, scaled to fill the screen. Black if the file is missing |
+| **Video screensaver** | The Wii channel Protector de pantalla picks the clip. `WiiDream` plays it muted and looping, scaled to fill. Black if none is set, or when that channel's switch is off |
 | **Remote keys** | Keeps the Input, YouTube and gear buttons working after the stock launcher is gone |
 
 <details>
@@ -459,12 +459,14 @@ tools/tv.py 'settings put secure screensaver_components com.gathin.tvhome/.Clock
 - To try either look without touching the clock: `adb shell setprop debug.wiitv.night 1` (dark) or `0`
   (light); `adb shell setprop debug.wiitv.night ""` goes back to automatic. It applies within a minute, or at once
   when Home is reopened. The property is not kept across reboots.
-- Video screensaver (`WiiDream`, listed as "Video"): `screensaver.mp4` from the app's external files directory,
-  muted, looping, scaled to fill the screen. It starts as soon as the screensaver does. Any key or touch wakes
-  the TV. If the file is missing or will not play, the screen stays black. The Clock screensaver is still there.
-  Set it with `adb shell settings put secure screensaver_components com.gathin.tvhome/.WiiDream`.
+- Video screensaver (`WiiDream`, listed as "Video"): the clip chosen on the Wii channel **Protector de pantalla**
+  (every `.mp4` in `screensavers/`, or **Pantalla negra**). Muted, looping, scaled to fill the screen. With nothing
+  chosen yet it plays the first clip there, then the older `screensaver.mp4`, then black. The channel's switch off
+  keeps the screen black and the dream leaves at once. Any key or touch wakes the TV. The Clock screensaver is still
+  there. Set it with `adb shell settings put secure screensaver_components com.gathin.tvhome/.WiiDream`.
 
-      adb push screensaver.mp4 /sdcard/Android/data/com.gathin.tvhome/files/screensaver.mp4
+      adb shell mkdir -p /sdcard/Android/data/com.gathin.tvhome/files/screensavers
+      adb push clip.mp4 /sdcard/Android/data/com.gathin.tvhome/files/screensavers/clip.mp4
 
 - The Wii menu also dims itself after 5 minutes with no key (`wii_dim_minutes` in `res/values/config.xml`, 0 turns
   it off). The first key only brightens it again; it does not move the cursor or open anything.
@@ -736,10 +738,18 @@ Home plays `music.mp3` from the app's external files dir instead of the bundled 
 
 The MP3 lives in `music/` in the repo and is not bundled in the APK.
 
-## Video screensaver (2.11)
+## Video screensaver (2.12)
 
-The "Video" screensaver (`WiiDream`) plays `screensaver.mp4` from that same external files directory,
-muted and looping, scaled to fill the screen. Any key or touch wakes the TV. If the file is missing
-or will not play, the screen stays black. The video is not bundled in the APK:
+The Wii menu has a **Protector de pantalla** channel. It lists every `.mp4` in `screensavers/`
+(a short name and a frame from the clip), plus **Pantalla negra**, a **Ver ahora** preview, and the
+switch **Protector de pantalla activado**. The choice stays on the TV. `WiiDream` plays that clip,
+muted and looping, scaled to fill the screen. With nothing chosen yet it plays the first `.mp4` in
+`screensavers/`, then the older `screensaver.mp4`, then black. While the switch is off the dream stays
+black and leaves at once. Any key or touch wakes the TV. The video is not in the APK:
+
+    adb shell mkdir -p /sdcard/Android/data/com.gathin.tvhome/files/screensavers
+    adb push clip.mp4 /sdcard/Android/data/com.gathin.tvhome/files/screensavers/clip.mp4
+
+The old single file still works when `screensavers/` has no video:
 
     adb push screensaver.mp4 /sdcard/Android/data/com.gathin.tvhome/files/screensaver.mp4

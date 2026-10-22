@@ -321,6 +321,20 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         notifyDataSetChanged();
     }
 
+    /**
+     * Pins a tile in front of the apps from the last reload(). WiiMenu uses it for the screensaver channel,
+     * which is this launcher rather than an installed TV app (reload skips our own package). Wii reads the
+     * list directly; the notify keeps a recycler in step if one is attached.
+     */
+    void pinFirst(Entry entry) {
+        String key = entry.component.flattenToShortString();
+        for (int i = items.size() - 1; i >= 0; i--) {
+            if (key.equals(items.get(i).component.flattenToShortString())) items.remove(i);
+        }
+        items.add(0, entry);
+        notifyDataSetChanged();
+    }
+
     /** A banner_* drawable bundled with the launcher, or null for none or a name that is not one. */
     private Drawable bundledBanner(String name) {
         if (name == null || !name.startsWith("banner_")) return null;

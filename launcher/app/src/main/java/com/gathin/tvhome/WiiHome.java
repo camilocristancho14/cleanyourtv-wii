@@ -301,6 +301,11 @@ final class WiiHome {
         tile.setOnClickListener(v -> {
             lastKey = key;
             if (sounds != null) sounds.confirm();
+            // The screensaver channel is ours. Open it in this task so BACK returns to the menu.
+            if (ScreensaverActivity.class.getName().equals(e.component.getClassName())) {
+                act.startActivity(new Intent(act, ScreensaverActivity.class));
+                return;
+            }
             apps.launch(e);
         });
         tile.setOnLongClickListener(v -> pickUp(slot));
