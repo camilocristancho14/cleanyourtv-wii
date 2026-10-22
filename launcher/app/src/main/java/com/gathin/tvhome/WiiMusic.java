@@ -11,6 +11,9 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
+import android.util.Log;
+
+import java.io.File;
 
 /**
  * The Wii Home background music (res/raw/wii_music.ogg, an original loop made by tools/make_wii_music.py). Soft,
@@ -147,17 +150,15 @@ final class WiiMusic {
     private boolean ensurePlayer() {
         if (player != null) return true;
         if (failed) return false;
+        MediaPlayer ext = openExternal();
+        if (ext != null) {
+            player = ext;
+            return true;
+        }
         MediaPlayer mp = new MediaPlayer();
         try (AssetFileDescriptor fd = ctx.getResources().openRawResourceFd(R.raw.wii_music)) {
-            mp.setAudioAttributes(new AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build());
+            setUp(mp);
             mp.setDataSource(fd.getFileDescriptor(), fd.getStartOffset(), fd.getLength());
-            mp.setLooping(true);
-            mp.setOnErrorListener((p, what, extra) -> {
-                release();
-                return true;
-            });
             mp.prepare();
             player = mp;
             return true;
@@ -166,6 +167,40 @@ final class WiiMusic {
             failed = true;
             mp.release();
             return false;
+        }
+    }
+
+    private void setUp(MediaPlayer mp) {
+        mp.setAudioAttributes(new AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build());
+        mp.setLooping(true);
+        mp.setOnErrorListener((p, what, extra) -> {
+            release();
+            return true;
+        });
+    }
+
+    /** getExternalFilesDir(null)/music.mp3 (pushed with adb), if there and playable; otherwise null. */
+    private MediaPlayer openExternal() {
+        MediaPlayer mp = null;
+        try {
+            File dir = ctx.getExternalFilesDir(null);
+            if (dir == null) return null;
+            File f = new File(dir, "music.mp3");
+            if (!f.isFile() || f.length() <= 0) return null;
+            mp = new MediaPlayer();
+            setUp(mp);
+            mp.setDataSource(f.getAbsolutePath());
+            mp.prepare();
+            Log.i("WiiMusic", "WiiMusic: external music loaded: music.mp3");
+            return mp;
+        } catch (Throwable t) {
+            Log.w("WiiMusic", "WiiMusic: external music failed, using bundled loop", t);
+            if (mp != null) {
+                try { mp.release(); } catch (Throwable ignored) { }
+            }
+            return null;
         }
     }
 

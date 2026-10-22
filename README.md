@@ -724,3 +724,12 @@ The people whose work is in this repo:
 
 MIT, see [`LICENSE`](LICENSE). The Outfit typeface is under the SIL Open Font License, see
 `launcher/FONT-LICENSE-OFL.txt`.
+
+## Custom Home music (2.9)
+
+Home plays `music.mp3` from the app's external files dir instead of the bundled loop, if present
+(same volume, fades and on/off setting; falls back to the bundled loop on error):
+
+    adb push music/wii_menu.mp3 /sdcard/Android/data/com.gathin.tvhome/files/music.mp3
+
+The MP3 lives in `music/` in the repo and is not bundled in the APK.
