@@ -66,6 +66,7 @@ final class WiiHome {
     private final float u;
     private FrameLayout dialog;
     private WiiSounds sounds;
+    private final WiiMusic music;
     private boolean started, dirty = true;
     /** First column of the page the strip is scrolled to (or heading to). */
     private int scrollCol;
@@ -105,6 +106,7 @@ final class WiiHome {
         int screenH = act.getResources().getDisplayMetrics().heightPixels;
         this.u = screenH / 1080f;
         this.apps = new AppAdapter(act, act, 0, cfg);
+        this.music = new WiiMusic(act, cfg.wiiMusic);
         apps.setGroupByCategory(true);
         apps.hidePackages(WiiOrder.NO_TILE);
         Typeface font = act.getResources().getFont(R.font.outfit_medium);
@@ -145,6 +147,7 @@ final class WiiHome {
             act.registerReceiver(packageReceiver, packageFilter);
             act.registerReceiver(timeReceiver, timeFilter);
         }
+        music.onStart();
         updateClock();
         if (dirty) reload();
     }
@@ -153,11 +156,18 @@ final class WiiHome {
         updateClock();
         if (dialog == null && frame.findFocus() == null) focusSlot(0);
         if (sounds != null) sounds.startup();
+        music.onResume();
     }
 
     void onPause() {
         dropHeld();
         closeDialog(false);
+        music.onPause();
+    }
+
+    /** Losing focus to another app's window (a dialog, a panel, a screensaver) fades the music out too. */
+    void onWindowFocusChanged(boolean hasFocus) {
+        music.onWindowFocusChanged(hasFocus);
     }
 
     void onStop() {
@@ -169,6 +179,7 @@ final class WiiHome {
         act.unregisterReceiver(timeReceiver);
         if (sounds != null) sounds.release();
         sounds = null;
+        music.onStop();
     }
 
     void onHome() {

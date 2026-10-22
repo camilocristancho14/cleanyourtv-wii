@@ -33,10 +33,15 @@ final class WiiTime {
 
     /** debug.wiitv.night through the hidden android.os.SystemProperties; "" when it can't be read (or off Android). */
     static String override() {
+        return property(NIGHT_PROPERTY);
+    }
+
+    /** A system property through the hidden android.os.SystemProperties; "" when it can't be read (or off Android). */
+    static String property(String name) {
         try {
-            //noinspection PrivateApi: a debug switch only; any failure just means automatic.
+            //noinspection PrivateApi: debug switches only; any failure just means the default.
             Object v = Class.forName("android.os.SystemProperties")
-                    .getMethod("get", String.class, String.class).invoke(null, NIGHT_PROPERTY, "");
+                    .getMethod("get", String.class, String.class).invoke(null, name, "");
             return v == null ? "" : v.toString().trim();
         } catch (Throwable t) {
             return "";

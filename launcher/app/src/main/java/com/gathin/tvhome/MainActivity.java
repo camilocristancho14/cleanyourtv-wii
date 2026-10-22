@@ -880,7 +880,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
-        if (wii != null) return;
+        if (wii != null) {
+            wii.onWindowFocusChanged(hasFocus);
+            return;
+        }
         if (hasFocus) {
             if (libraryFocusPending && appLibrary == null) focusLibrary();
             showCardPrompt();

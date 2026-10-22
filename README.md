@@ -464,6 +464,15 @@ tools/tv.py 'settings put secure screensaver_components com.gathin.tvhome/.Clock
   Play Store) are re-toned once and cached: the white paper turns transparent over the dark tile and black or gray
   lettering is lifted to light gray. No app list; it works from the banner's pixels. Light mode is unchanged.
 - Page arrows (2.8): a glossy blue triangle in a rounded gray tab on the screen edge, dark gray at night.
+- Music (2.8): a soft, calm loop plays while the Wii menu is in front (volume 0.25 of media volume, 1 s fade-in).
+  It fades out and pauses when an app opens, another app's dialog takes focus, the screensaver starts or the
+  screen turns off, and resumes on return. It never asks for audio focus, so it cannot pause or duck another
+  app. Turn it off in the launcher's Settings screen (hold OK on wiiOS: "Wii menu music"), with
+  `"wii_music": false` in a theme, or for testing with `adb shell setprop debug.wiitv.music 0` (`1` forces it on,
+  `""` follows the setting; read when Home regains focus).
+- The music is **original**, not Nintendo's: synthesized by [`tools/make_wii_music.py`](tools/make_wii_music.py)
+  (electric piano, bell melody and bass, 100 BPM, 8 bars, 19.2 s, seamless loop, ~61 KB OGG Vorbis mono).
+  It is dedicated to the public domain under CC0; you may also use it under the repo's MIT licence.
 
 ```bash
 tools/tv.py 'settings put secure screensaver_components com.gathin.tvhome/.WiiDream; settings put secure screensaver_enabled 1'

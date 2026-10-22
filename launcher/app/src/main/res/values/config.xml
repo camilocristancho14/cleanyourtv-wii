@@ -116,6 +116,9 @@
          with a clock and date, a wiiOS button (Settings), an SD button (file manager) and an Entradas button
          (HDMI inputs and Live TV). Themes can set "wii_style" (themes/wii). -->
     <bool name="wii_style">true</bool>
+    <!-- Soft background music (an original loop) while the Wii menu is in front; paused for apps, dialogs,
+         the screensaver and screen off. Also in the launcher's own Settings screen, and "wii_music" in a theme. -->
+    <bool name="wii_music">true</bool>
     <!-- A reorder button (two arrows) in the top bar. Off by default: reordering is also in the Settings
          button's long-press menu, so it needs no extra button on screen. -->
     <bool name="reorder_button">false</bool>
