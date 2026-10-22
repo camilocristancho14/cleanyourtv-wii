@@ -1,13 +1,10 @@
 package com.gathin.tvhome;
 
 import android.content.BroadcastReceiver;
-import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
-import android.content.pm.PackageManager;
-import android.content.pm.ResolveInfo;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -67,7 +64,13 @@ final class WiiHome {
     private FrameLayout dialog;
     private WiiSounds sounds;
     private final WiiMusic music;
-    private boolean started, dirty = true;
+    /** Screen Burn-in Reduction: the veil, how long Home waits without a key before showing it (0 = never), and
+     *  the key that lifted it, whose repeats and key-up are swallowed too. */
+    private final WiiViews.Veil veil;
+    private final long dimMs;
+    private final Runnable dimTask = this::dim;
+    private int wakeKey = KeyEvent.KEYCODE_UNKNOWN;
+    private boolean started, resumed, dirty = true;
     /** First column of the page the strip is scrolled to (or heading to). */
     private int scrollCol;
     private String lastKey;
@@ -105,10 +108,9 @@ final class WiiHome {
         this.act = act;
         int screenH = act.getResources().getDisplayMetrics().heightPixels;
         this.u = screenH / 1080f;
-        this.apps = new AppAdapter(act, act, 0, cfg);
+        this.apps = WiiMenu.apps(act, act, cfg);
         this.music = new WiiMusic(act, cfg.wiiMusic);
-        apps.setGroupByCategory(true);
-        apps.hidePackages(WiiOrder.NO_TILE);
+        this.dimMs = act.getResources().getInteger(R.integer.wii_dim_minutes) * 60_000L;
         Typeface font = act.getResources().getFont(R.font.outfit_medium);
         frame = new FrameLayout(act);
         root = new WiiViews.Root(act, screenH, font);
@@ -118,6 +120,10 @@ final class WiiHome {
         hand = WiiViews.newHand(act);
         float hh = screenH * 0.115f;
         frame.addView(hand, new FrameLayout.LayoutParams(Math.round(hh * HAND_ASPECT), Math.round(hh)));
+        // Over everything, the cursor too.
+        veil = new WiiViews.Veil(act);
+        veil.setTranslationZ(2000f);
+        frame.addView(veil, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         packageFilter.addAction(Intent.ACTION_PACKAGE_ADDED);
         packageFilter.addAction(Intent.ACTION_PACKAGE_REMOVED);
         packageFilter.addAction(Intent.ACTION_PACKAGE_REPLACED);
@@ -157,9 +163,14 @@ final class WiiHome {
         if (dialog == null && frame.findFocus() == null) focusSlot(0);
         if (sounds != null) sounds.startup();
         music.onResume();
+        resumed = true;
+        restartDim();
     }
 
     void onPause() {
+        resumed = false;
+        wakeKey = KeyEvent.KEYCODE_UNKNOWN;
+        undim();
         dropHeld();
         closeDialog(false);
         music.onPause();
@@ -183,6 +194,8 @@ final class WiiHome {
     }
 
     void onHome() {
+        undim();
+        restartDim();
         dropHeld();
         closeDialog(false);
         lastKey = null;
@@ -199,24 +212,47 @@ final class WiiHome {
         closeDialog(true);
     }
 
-    // ---- apps ------------------------------------------------------------------------------------
+    // ---- Screen Burn-in Reduction ----------------------------------------------------------------
 
-    private List<String> defaultKeys() {
-        List<String> keys = new ArrayList<>();
-        for (int i = 0; i < apps.appCount(); i++) keys.add(apps.keyAt(i));
-        return keys;
-    }
-
-    private boolean installed(String key) {
-        ComponentName cn = ComponentName.unflattenFromString(key);
-        if (cn == null) return false;
-        try {
-            act.getPackageManager().getPackageInfo(cn.getPackageName(), 0);
+    /**
+     * Every key comes here first (MainActivity.dispatchKeyEvent). While the veil is up, a key only lifts it: that
+     * key, its repeats and its key-up go no further. Any other key restarts the wait. True when the key is used up.
+     */
+    boolean onKey(KeyEvent event) {
+        int code = event.getKeyCode();
+        if (veil.isOn()) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                wakeKey = code;
+                undim();
+                restartDim();
+            }
             return true;
-        } catch (PackageManager.NameNotFoundException e) {
-            return false;
         }
+        if (code == wakeKey && !(event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0)) {
+            if (event.getAction() == KeyEvent.ACTION_UP) wakeKey = KeyEvent.KEYCODE_UNKNOWN;
+            return true;
+        }
+        wakeKey = KeyEvent.KEYCODE_UNKNOWN;
+        restartDim();
+        return false;
     }
+
+    private void restartDim() {
+        handler.removeCallbacks(dimTask);
+        if (dimMs > 0 && resumed) handler.postDelayed(dimTask, dimMs);
+    }
+
+    private void dim() {
+        if (!resumed || veil.isOn()) return;
+        veil.start(root.isDark());
+    }
+
+    private void undim() {
+        handler.removeCallbacks(dimTask);
+        veil.stop();
+    }
+
+    // ---- apps ------------------------------------------------------------------------------------
 
     private void reload() {
         if (holding()) {
@@ -226,13 +262,9 @@ final class WiiHome {
         View focused = frame.findFocus();
         int focusedSlot = strip.tiles.indexOf(focused);
         if (focusedSlot >= 0 && focusedSlot < layout.size() && layout.get(focusedSlot) != null) lastKey = layout.get(focusedSlot);
-        final List<ResolveInfo> leanback = act.getPackageManager().queryIntentActivities(
-                new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER), 0);
-        apps.reload(Collections.<Cards.Card>emptyList(), leanback);
+        WiiMenu.reload(act, apps);
         dirty = false;
-        List<String> saved = WiiLayout.load(act);
-        layout = WiiLayout.arrange(defaultKeys(), saved, this::installed);
-        if (saved != null && !layout.equals(saved)) WiiLayout.save(act, layout);
+        layout = WiiMenu.layout(act, apps, true);
         int at = lastKey == null ? -1 : layout.indexOf(lastKey);
         bindStrip(layout);
         if (at >= 0) showColumn(at / ROWS, false);
@@ -385,6 +417,7 @@ final class WiiHome {
     private void setNight(boolean dark) {
         if (root.isDark() == dark) return;
         root.setDark(dark);
+        veil.setNight(dark);
         if (dialog != null) {
             closeDialog(false);
             showEntradas();

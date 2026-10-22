@@ -4,42 +4,28 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
-import android.os.Handler;
-import android.os.Looper;
 import android.service.dreams.DreamService;
 import android.text.format.DateFormat;
-import android.view.Gravity;
-import android.view.View;
 import android.view.ViewGroup;
-import android.view.animation.AccelerateDecelerateInterpolator;
 import android.widget.FrameLayout;
-import android.widget.LinearLayout;
-import android.widget.TextView;
 
 import java.util.Calendar;
-import java.util.Random;
 
 /**
- * Screensaver "Wii Menu": the Wii menu's lined backdrop (charcoal from 16:00 to 07:00, see WiiTime) with its
- * seven-segment clock and Spanish date floating slowly around the screen, so nothing burns in. Dimmed, not
- * interactive (any key wakes the TV). Only the small clock group moves, on its own hardware layer, and it rests
- * most of the time: cheap on a 1 GB TV.
+ * Screensaver "Wii Menu", as the Wii's own Screen Burn-in Reduction: the Wii had no clock screensaver, it simply
+ * dimmed the menu it was showing. So this is the Wii menu itself (the owner's tiles in their order, first page, the
+ * tray with its buttons, the live clock and date, dark from 16:00 to 07:00) still, with no cursor or glow, under a
+ * gray veil that fades in and breathes very slightly (WiiDim). The whole menu moves a few pixels every few minutes
+ * and nothing else moves. Dimmed, silent, not interactive: any key wakes the TV.
  */
 public class WiiDream extends DreamService {
 
-    /** A glide every 20 s, lasting 12 s, never more than a quarter of the screen away. */
-    private static final long DRIFT_EVERY_MS = 20_000L, DRIFT_MS = 12_000L;
-    private static final float MAX_STEP = 0.25f;
-
-    private final Handler handler = new Handler(Looper.getMainLooper());
-    private final Random random = new Random();
-    private final WiiViews.Look look = new WiiViews.Look();
-    private WiiViews.Backdrop backdrop;
-    private WiiViews.Clock clock;
-    private TextView date;
-    private LinearLayout group;
+    private WiiViews.Root root;
+    private WiiViews.Veil veil;
+    private GradientDrawable under;
+    private float u;
     private boolean registered;
 
     private final BroadcastReceiver timeReceiver = new BroadcastReceiver() {
@@ -49,38 +35,26 @@ public class WiiDream extends DreamService {
         }
     };
 
-    private final Runnable drift = new Runnable() {
-        @Override
-        public void run() {
-            glide();
-            handler.postDelayed(this, DRIFT_EVERY_MS);
-        }
-    };
-
     @Override
     public void onAttachedToWindow() {
         super.onAttachedToWindow();
         setInteractive(false);   // any key wakes the TV back to where it was
         setFullscreen(true);
         setScreenBright(false);
-        float u = getResources().getDisplayMetrics().heightPixels / 1080f;
-        Typeface font = getResources().getFont(R.font.outfit_medium);
-        look.p = WiiTime.isNightNow() ? WiiViews.Palette.DARK : WiiViews.Palette.LIGHT;
+        int screenH = getResources().getDisplayMetrics().heightPixels;
+        u = screenH / 1080f;
+        root = new WiiViews.Root(this, screenH, getResources().getFont(R.font.outfit_medium));
+        root.setDark(WiiTime.isNightNow());
+        AppAdapter apps = WiiMenu.apps(this, null, Config.load(this));
+        WiiMenu.reload(this, apps);
+        WiiMenu.still(root, apps, WiiMenu.layout(this, apps, false));
         FrameLayout frame = new FrameLayout(this);
-        backdrop = new WiiViews.Backdrop(this, u, look);
-        frame.addView(backdrop, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        group = new LinearLayout(this);
-        group.setOrientation(LinearLayout.VERTICAL);
-        group.setGravity(Gravity.CENTER_HORIZONTAL);
-        group.setLayerType(View.LAYER_TYPE_HARDWARE, null);
-        clock = new WiiViews.Clock(this, font, look);
-        group.addView(clock, new LinearLayout.LayoutParams(Math.round(640 * u), Math.round(190 * u)));
-        date = WiiViews.Root.newDate(this, font, look);
-        date.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, 92 * u);
-        LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        dlp.topMargin = Math.round(18 * u);
-        group.addView(date, dlp);
-        frame.addView(group, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        // Shows in the few pixels the shifted menu uncovers at the screen edge.
+        under = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, new int[] {0, 0});
+        frame.setBackground(under);
+        frame.addView(root, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        veil = new WiiViews.Veil(this);
+        frame.addView(veil, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         setContentView(frame);
         update();
     }
@@ -94,16 +68,8 @@ public class WiiDream extends DreamService {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) registerReceiver(timeReceiver, f, Context.RECEIVER_NOT_EXPORTED);
         else registerReceiver(timeReceiver, f);
         registered = true;
+        veil.start(root.isDark());
         update();
-        group.setAlpha(0f);
-        group.post(() -> {
-            View parent = (View) group.getParent();
-            group.setTranslationX(Math.max(0, parent.getWidth() - group.getWidth()) * (0.15f + 0.7f * random.nextFloat()));
-            group.setTranslationY(Math.max(0, parent.getHeight() - group.getHeight()) * (0.15f + 0.7f * random.nextFloat()));
-            group.animate().alpha(1f).setDuration(1200).start();
-        });
-        handler.removeCallbacks(drift);
-        handler.postDelayed(drift, DRIFT_EVERY_MS);
     }
 
     @Override
@@ -119,41 +85,27 @@ public class WiiDream extends DreamService {
     }
 
     private void stop() {
-        handler.removeCallbacks(drift);
-        if (group != null) group.animate().cancel();
+        if (veil != null) veil.stop();
         if (registered) {
             unregisterReceiver(timeReceiver);
             registered = false;
         }
     }
 
-    /** A slow glide to a nearby spot that keeps the clock and date on screen. */
-    private void glide() {
-        View parent = (View) group.getParent();
-        float maxX = Math.max(0, parent.getWidth() - group.getWidth());
-        float maxY = Math.max(0, parent.getHeight() - group.getHeight());
-        float stepX = parent.getWidth() * MAX_STEP, stepY = parent.getHeight() * MAX_STEP;
-        float x = clamp(group.getTranslationX() + (random.nextFloat() * 2 - 1) * stepX, maxX);
-        float y = clamp(group.getTranslationY() + (random.nextFloat() * 2 - 1) * stepY, maxY);
-        group.animate().translationX(x).translationY(y).setDuration(DRIFT_MS)
-                .setInterpolator(new AccelerateDecelerateInterpolator()).start();
-    }
-
-    private static float clamp(float v, float max) {
-        return Math.max(0, Math.min(max, v));
-    }
-
-    /** The time, the date, and dark or light: on start and on every minute tick. */
+    /** On start and every minute: the time, the date, dark or light, and the menu's pixel-shift spot. */
     private void update() {
         Calendar now = Calendar.getInstance();
-        clock.setTime(now.get(Calendar.HOUR_OF_DAY), now.get(Calendar.MINUTE), DateFormat.is24HourFormat(this));
-        date.setText(WiiTime.date(now.get(Calendar.DAY_OF_WEEK), now.get(Calendar.DAY_OF_MONTH), now.get(Calendar.MONTH) + 1));
-        WiiViews.Palette p = WiiTime.isNightNow() ? WiiViews.Palette.DARK : WiiViews.Palette.LIGHT;
-        if (p != look.p) {
-            look.p = p;
-            date.setTextColor(p.text);
-            backdrop.invalidate();
-            clock.invalidate();
+        root.clock.setTime(now.get(Calendar.HOUR_OF_DAY), now.get(Calendar.MINUTE), DateFormat.is24HourFormat(this));
+        root.date.setText(WiiTime.date(now.get(Calendar.DAY_OF_WEEK), now.get(Calendar.DAY_OF_MONTH), now.get(Calendar.MONTH) + 1));
+        boolean dark = WiiTime.isNightNow();
+        if (dark != root.isDark()) {
+            root.setDark(dark);
+            veil.setNight(dark);
         }
+        WiiViews.Palette p = root.look.p;
+        under.setColors(new int[] {p.backTop, p.backBottom});
+        int[] shift = WiiDim.shift(veil.minutes(), Math.max(1, Math.round(WiiDim.SHIFT_PX * u)));
+        root.setTranslationX(shift[0]);
+        root.setTranslationY(shift[1]);
     }
 }

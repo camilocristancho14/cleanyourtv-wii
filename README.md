@@ -458,8 +458,14 @@ tools/tv.py 'settings put secure screensaver_components com.gathin.tvhome/.Clock
 - To try either look without touching the clock: `adb shell setprop debug.wiitv.night 1` (dark) or `0`
   (light); `adb shell setprop debug.wiitv.night ""` goes back to automatic. It applies within a minute, or at once
   when Home is reopened. The property is not kept across reboots.
-- "Wii Menu" screensaver (`WiiDream`): the Wii backdrop (dark at night) with the seven-segment clock and
-  the date gliding slowly around, dimmed; any key wakes the TV. The Clock screensaver is still there.
+- "Wii Menu" screensaver (`WiiDream`), like the Wii's own Screen Burn-in Reduction (the Wii had no clock
+  screensaver, it just dimmed the menu): the Wii menu itself, still (your tiles in your order, first page, the tray
+  and its buttons, the live clock and date, dark at night), with no cursor, under a gray veil that fades in over 2 s
+  and breathes very slightly. The whole menu shifts a few pixels every 3 minutes; nothing else moves. Dimmed screen,
+  no sound; any key wakes the TV. Set it with
+  `adb shell settings put secure screensaver_components com.gathin.tvhome/.WiiDream`. The Clock screensaver is still there.
+- The Wii menu also dims itself after 5 minutes with no key (`wii_dim_minutes` in `res/values/config.xml`, 0 turns
+  it off). The first key only brightens it again; it does not move the cursor or open anything.
 - In dark mode, banners made for a white tile (white, near-white or transparent edges, e.g. Netflix, YouTube,
   Play Store) are re-toned once and cached: the white paper turns transparent over the dark tile and black or gray
   lettering is lifted to light gray. No app list; it works from the banner's pixels. Light mode is unchanged.

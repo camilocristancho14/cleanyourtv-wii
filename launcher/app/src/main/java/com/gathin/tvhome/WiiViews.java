@@ -1024,6 +1024,77 @@ final class WiiViews {
         return hand;
     }
 
+    /**
+     * Screen Burn-in Reduction (WiiDim): a flat gray veil over the whole menu that fades in over 2 s and then breathes
+     * very slightly. Stepped from a handler, a few times a second, and only redrawn when the shown level changes.
+     */
+    static final class Veil extends View {
+        private final android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
+        private long since;
+        private boolean night, on;
+        private int shown = -1;
+        private final Runnable step = new Runnable() {
+            @Override
+            public void run() {
+                long t = android.os.SystemClock.uptimeMillis() - since;
+                int level = WiiDim.level(WiiDim.alpha(night, t));
+                if (level != shown) {
+                    shown = level;
+                    setAlpha(level / 255f);
+                }
+                handler.postDelayed(this, WiiDim.stepMs(t));
+            }
+        };
+
+        Veil(Context ctx) {
+            super(ctx);
+            setFocusable(false);
+            setClickable(false);
+            setAlpha(0f);
+            setVisibility(GONE);
+            setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
+            setNight(false);
+        }
+
+        /** One flat colour: the view's alpha applies straight to it, no offscreen layer. */
+        @Override
+        public boolean hasOverlappingRendering() {
+            return false;
+        }
+
+        void setNight(boolean dark) {
+            night = dark;
+            setBackgroundColor(WiiDim.color(dark));
+            shown = -1;
+        }
+
+        boolean isOn() {
+            return on;
+        }
+
+        /** Whole minutes since the veil started (the pixel shift's clock). */
+        long minutes() {
+            return on ? (android.os.SystemClock.uptimeMillis() - since) / 60_000L : 0;
+        }
+
+        void start(boolean dark) {
+            setNight(dark);
+            since = android.os.SystemClock.uptimeMillis();
+            on = true;
+            setAlpha(0f);
+            setVisibility(VISIBLE);
+            handler.removeCallbacks(step);
+            handler.post(step);
+        }
+
+        void stop() {
+            on = false;
+            handler.removeCallbacks(step);
+            setVisibility(GONE);
+            setAlpha(0f);
+        }
+    }
+
     /** The whole screen: places every child from the screen size. */
     static final class Root extends ViewGroup {
         /** Side buttons: diameter (of the screen height), and their sockets' radius over the button's. */
