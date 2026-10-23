@@ -130,6 +130,9 @@ final class Config {
     final int homeIdleClockMinutes;
     /** The Nintendo Wii menu look: a 4x3 page of channels and a curved bottom bar (config.xml, wii_style). */
     final boolean wiiStyle;
+    /** Soft background music on the Wii Home (config.xml or a theme: wii_music; the launcher settings can override it). */
+    final boolean wiiMusic;
+    static final String WII_MUSIC_KEY = "wii_music";
 
     private Config(List<String> dockApps, boolean fillDock, List<String> hiddenApps, String liveTvPackage,
                    String liveTvAction, Map<String, String> launchActions, Map<String, String> appLabels,
@@ -140,7 +143,8 @@ final class Config {
                    int[] settingsKeycodes, boolean settingsKeyPanel, boolean wallpaperEnabled, File wallpaper, List<File> wallpapers,
                    int wallpaperRotationMinutes, int wallpaperDim, String wallpaperOrder, boolean overlayApplied,
                    Festival festival, int[] inputKeycodes, List<String> appKeys,
-                   List<RaceWeekend.Race> raceCalendar, boolean cinematicHome, boolean ambientGlow, int homeIdleClockMinutes, boolean wiiStyle) {
+                   List<RaceWeekend.Race> raceCalendar, boolean cinematicHome, boolean ambientGlow, int homeIdleClockMinutes, boolean wiiStyle,
+                   boolean wiiMusic) {
         this.inputKeycodes = inputKeycodes;
         this.appKeys = Collections.unmodifiableList(appKeys);
         this.dockApps = Collections.unmodifiableList(dockApps);
@@ -192,6 +196,7 @@ final class Config {
         this.ambientGlow = ambientGlow;
         this.homeIdleClockMinutes = homeIdleClockMinutes;
         this.wiiStyle = wiiStyle;
+        this.wiiMusic = wiiMusic;
     }
 
     /** The folder the theme tools push into; null when external storage is unavailable. */
@@ -243,6 +248,7 @@ final class Config {
         boolean ambientGlow = res.getBoolean(R.bool.ambient_glow);
         int idleClockMinutes = res.getInteger(R.integer.home_idle_clock_minutes);
         boolean wiiStyle = res.getBoolean(R.bool.wii_style);
+        boolean wiiMusic = res.getBoolean(R.bool.wii_music);
         boolean applied = false;
 
         File dir = dir(ctx);
@@ -293,6 +299,7 @@ final class Config {
             ambientGlow = bool(json, "ambient_glow", ambientGlow);
             idleClockMinutes = integer(json, "home_idle_clock_minutes", idleClockMinutes, 0, 1440);
             wiiStyle = bool(json, "wii_style", wiiStyle);
+            wiiMusic = bool(json, WII_MUSIC_KEY, wiiMusic);
         }
         // A theme push or reset invalidates choices made on the TV. On first use, remember the
         // current theme without clearing choices from an older launcher version.
@@ -305,6 +312,7 @@ final class Config {
         if (chosenRows >= 0 && chosenRows <= 3) rowsBelow = chosenRows;
         animations = choices.getBoolean("animations", animations);
         advancedEffects = choices.getBoolean("advanced_effects", advancedEffects);
+        wiiMusic = choices.getBoolean(WII_MUSIC_KEY, wiiMusic);
         File wallpaper = dir != null ? new File(dir, WALLPAPER_NAME) : null;
         if (wallpaper != null && !(wallpaper.isFile() && wallpaper.length() > 0)) wallpaper = null;
         // A theme can also switch the wallpaper off while the file is still there.
@@ -352,7 +360,7 @@ final class Config {
                 Math.max(0, Math.min(100, skyIntensity)), settingsKeycodes, settingsKeyPanel, wallpaperEnabled, wallpaper,
                 wallpapers, rotationMinutes, wallpaperDim, wallpaperOrder, applied,
                 festival, inputKeycodes, appKeys, json == null ? Collections.emptyList() : raceCalendar(json), cinematic, ambientGlow,
-                Math.max(0, idleClockMinutes), wiiStyle);
+                Math.max(0, idleClockMinutes), wiiStyle, wiiMusic);
     }
 
     /**
@@ -394,12 +402,12 @@ final class Config {
             // Existing preferences survive an app upgrade, unless the first launch follows an
             // explicit theme push or reset by the updated tools.
             SharedPreferences.Editor editor = choices.edit();
-            if (!"absent".equals(token)) editor.remove("columns").remove("animations")
-                    .remove("advanced_effects").remove(ROWS_BELOW_DOCK_KEY).remove(WALLPAPER_CHOICE_KEY);
+            if (!"absent".equals(token)) editor.remove("columns").remove("animations").remove("advanced_effects")
+                    .remove(ROWS_BELOW_DOCK_KEY).remove(WALLPAPER_CHOICE_KEY).remove(WII_MUSIC_KEY);
             editor.putString(THEME_SIGNATURE_KEY, signature).commit();
         } else if (!seen.equals(signature)) {
             choices.edit().remove("columns").remove("animations").remove("advanced_effects")
-                    .remove(ROWS_BELOW_DOCK_KEY).remove(WALLPAPER_CHOICE_KEY)
+                    .remove(ROWS_BELOW_DOCK_KEY).remove(WALLPAPER_CHOICE_KEY).remove(WII_MUSIC_KEY)
                     .putString(THEME_SIGNATURE_KEY, signature).commit();
         }
     }

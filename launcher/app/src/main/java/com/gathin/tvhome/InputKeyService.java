@@ -24,9 +24,20 @@ public class InputKeyService extends AccessibilityService {
     private Map<Integer, String> appKeys = Collections.emptyMap();
     private Map<Integer, String> appScancodes = Collections.emptyMap();
 
+    /** The connected service, for the Alexa bridge's lock-screen and background-launch actions. */
+    static volatile InputKeyService instance;
+
+    @Override
+    public boolean onUnbind(Intent intent) {
+        if (instance == this) instance = null;
+        return super.onUnbind(intent);
+    }
+
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
+        instance = this;
+        AlexaBridgeService.start(this);
         // From config.xml or a theme's config.json; theme.sh rebinds this service after a push.
         Config config = Config.load(this);
         inputKeycodes = config.inputKeycodes;

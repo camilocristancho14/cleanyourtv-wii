@@ -303,6 +303,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        AlexaBridgeService.start(this);
         density = getResources().getDisplayMetrics().density;
         // config.xml, overlaid by config.json from a pushed theme (see Config and tools/theme.sh).
         Config cfg = Config.load(this);
@@ -879,7 +880,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
-        if (wii != null) return;
+        if (wii != null) {
+            wii.onWindowFocusChanged(hasFocus);
+            return;
+        }
         if (hasFocus) {
             if (libraryFocusPending && appLibrary == null) focusLibrary();
             showCardPrompt();
@@ -932,6 +936,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
      */
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
+        // Wii menu dimmed (Screen Burn-in Reduction): the key only brightens it again.
+        if (wii != null && wii.onKey(event)) return true;
         if (handleSettingsKey(event)) return true;
         if (!reordering) return super.dispatchKeyEvent(event);
         if (dockEditing) return dispatchDockEdit(event);

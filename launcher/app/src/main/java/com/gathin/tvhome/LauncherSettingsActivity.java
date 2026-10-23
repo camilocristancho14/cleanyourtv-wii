@@ -7,6 +7,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.provider.Settings;
+import android.view.View;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -23,10 +24,12 @@ public final class LauncherSettingsActivity extends Activity {
     private TextView animationsChoice;
     private TextView advancedChoice;
     private TextView followThemeChoice;
+    private TextView wiiMusicChoice;
     private int columns;
     private int rowsBelowDock;
     private boolean animations;
     private boolean advancedEffects;
+    private boolean wiiMusic;
 
     @Override
     protected void onCreate(Bundle state) {
@@ -38,6 +41,7 @@ public final class LauncherSettingsActivity extends Activity {
         rowsBelowDock = config.rowsBelowDock;
         animations = config.animations;
         advancedEffects = config.animations && config.advancedEffects;
+        wiiMusic = config.wiiMusic;
 
         int[] ids = {R.id.columns4, R.id.columns5, R.id.columns6, R.id.columns7};
         for (int i = 0; i < ids.length; i++) {
@@ -69,6 +73,15 @@ public final class LauncherSettingsActivity extends Activity {
             reverseRow(columnChoices);
             reverseRow(rowChoices);
         }
+        wiiMusicChoice = findViewById(R.id.wiiMusicChoice);
+        // Only the Wii menu has music; the Apple TV style hides the row.
+        wiiMusicChoice.setVisibility(config.wiiStyle ? View.VISIBLE : View.GONE);
+        wiiMusicChoice.setOnClickListener(v -> {
+            wiiMusic = !wiiMusic;
+            choices.edit().putBoolean(Config.WII_MUSIC_KEY, wiiMusic).apply();
+            setResult(RESULT_OK);
+            refresh();
+        });
         wallpaperChoice = findViewById(R.id.wallpaperChoice);
         wallpaperChoice.setOnClickListener(v -> showWallpaperPicker());
         animationsChoice = findViewById(R.id.animationsChoice);
@@ -97,12 +110,13 @@ public final class LauncherSettingsActivity extends Activity {
         followThemeChoice.setOnClickListener(v -> {
             if (!hasOnTvChoices()) return;
             choices.edit().remove("columns").remove(Config.ROWS_BELOW_DOCK_KEY).remove("animations")
-                    .remove("advanced_effects").remove(Config.WALLPAPER_CHOICE_KEY).commit();
+                    .remove("advanced_effects").remove(Config.WALLPAPER_CHOICE_KEY).remove(Config.WII_MUSIC_KEY).commit();
             Config current = Config.load(this);
             columns = current.columns;
             rowsBelowDock = current.rowsBelowDock;
             animations = current.animations;
             advancedEffects = current.animations && current.advancedEffects;
+            wiiMusic = current.wiiMusic;
             setResult(RESULT_OK);
             refresh();
         });
@@ -184,6 +198,7 @@ public final class LauncherSettingsActivity extends Activity {
                 getString(animations ? R.string.on : R.string.off)));
         advancedChoice.setText(getString(R.string.advanced_effects_state,
                 getString(advancedEffects ? R.string.on : R.string.off)));
+        wiiMusicChoice.setText(getString(R.string.wii_music_state, getString(wiiMusic ? R.string.on : R.string.off)));
         advancedChoice.setEnabled(animations);
         advancedChoice.setAlpha(animations ? 1f : 0.5f);
         String wallpaperCurrent = choices.getString(Config.WALLPAPER_CHOICE_KEY, null);
@@ -197,7 +212,7 @@ public final class LauncherSettingsActivity extends Activity {
     private boolean hasOnTvChoices() {
         return choices.contains("columns") || choices.contains(Config.ROWS_BELOW_DOCK_KEY)
                 || choices.contains("animations") || choices.contains("advanced_effects")
-                || choices.contains(Config.WALLPAPER_CHOICE_KEY);
+                || choices.contains(Config.WALLPAPER_CHOICE_KEY) || choices.contains(Config.WII_MUSIC_KEY);
     }
 
     private void open(Intent intent) {

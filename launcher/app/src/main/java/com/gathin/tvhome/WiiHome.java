@@ -1,13 +1,10 @@
 package com.gathin.tvhome;
 
 import android.content.BroadcastReceiver;
-import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
-import android.content.pm.PackageManager;
-import android.content.pm.ResolveInfo;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -44,7 +41,8 @@ import java.util.regex.Pattern;
 
 /**
  * The Nintendo Wii menu (config wii_style): the channels in pages of 4 columns by 3 rows (12 apps) that slide
- * sideways one page at a time, a curved bar with the clock, the wiiOS (Settings), SD (file manager) and envelope (Entradas) buttons.
+ * sideways one page at a time, a curved tray with the clock, the wiiOS (Settings), SD (file manager) and Entradas (inputs) buttons.
+ * Dark from 16:00 to 07:00 (WiiTime), switched live on the minute tick.
  * It lives inside MainActivity, so the launcher is still the one HOME activity. D-pad navigation is explicit,
  * not left to focus search.
  */
@@ -55,7 +53,6 @@ final class WiiHome {
     private static final float HAND_ASPECT = 34.88f / 49.38f;
     private static final String FILE_MANAGER = "com.alphainventor.filemanager";
     private static final String HDMI_SERVICE = "com.mediatek.tis/.HdmiInputService/";
-    private static final String[] DAYS = {"Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"};
 
     private final MainActivity act;
     private final AppAdapter apps;
@@ -66,7 +63,14 @@ final class WiiHome {
     private final float u;
     private FrameLayout dialog;
     private WiiSounds sounds;
-    private boolean started, dirty = true;
+    private final WiiMusic music;
+    /** Screen Burn-in Reduction: the veil, how long Home waits without a key before showing it (0 = never), and
+     *  the key that lifted it, whose repeats and key-up are swallowed too. */
+    private final WiiViews.Veil veil;
+    private final long dimMs;
+    private final Runnable dimTask = this::dim;
+    private int wakeKey = KeyEvent.KEYCODE_UNKNOWN;
+    private boolean started, resumed, dirty = true;
     /** First column of the page the strip is scrolled to (or heading to). */
     private int scrollCol;
     private String lastKey;
@@ -104,9 +108,9 @@ final class WiiHome {
         this.act = act;
         int screenH = act.getResources().getDisplayMetrics().heightPixels;
         this.u = screenH / 1080f;
-        this.apps = new AppAdapter(act, act, 0, cfg);
-        apps.setGroupByCategory(true);
-        apps.hidePackages(WiiOrder.NO_TILE);
+        this.apps = WiiMenu.apps(act, act, cfg);
+        this.music = new WiiMusic(act, cfg.wiiMusic);
+        this.dimMs = act.getResources().getInteger(R.integer.wii_dim_minutes) * 60_000L;
         Typeface font = act.getResources().getFont(R.font.outfit_medium);
         frame = new FrameLayout(act);
         root = new WiiViews.Root(act, screenH, font);
@@ -116,6 +120,10 @@ final class WiiHome {
         hand = WiiViews.newHand(act);
         float hh = screenH * 0.115f;
         frame.addView(hand, new FrameLayout.LayoutParams(Math.round(hh * HAND_ASPECT), Math.round(hh)));
+        // Over everything, the cursor too.
+        veil = new WiiViews.Veil(act);
+        veil.setTranslationZ(2000f);
+        frame.addView(veil, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         packageFilter.addAction(Intent.ACTION_PACKAGE_ADDED);
         packageFilter.addAction(Intent.ACTION_PACKAGE_REMOVED);
         packageFilter.addAction(Intent.ACTION_PACKAGE_REPLACED);
@@ -145,6 +153,7 @@ final class WiiHome {
             act.registerReceiver(packageReceiver, packageFilter);
             act.registerReceiver(timeReceiver, timeFilter);
         }
+        music.onStart();
         updateClock();
         if (dirty) reload();
     }
@@ -153,11 +162,23 @@ final class WiiHome {
         updateClock();
         if (dialog == null && frame.findFocus() == null) focusSlot(0);
         if (sounds != null) sounds.startup();
+        music.onResume();
+        resumed = true;
+        restartDim();
     }
 
     void onPause() {
+        resumed = false;
+        wakeKey = KeyEvent.KEYCODE_UNKNOWN;
+        undim();
         dropHeld();
         closeDialog(false);
+        music.onPause();
+    }
+
+    /** Losing focus to another app's window (a dialog, a panel, a screensaver) fades the music out too. */
+    void onWindowFocusChanged(boolean hasFocus) {
+        music.onWindowFocusChanged(hasFocus);
     }
 
     void onStop() {
@@ -169,9 +190,12 @@ final class WiiHome {
         act.unregisterReceiver(timeReceiver);
         if (sounds != null) sounds.release();
         sounds = null;
+        music.onStop();
     }
 
     void onHome() {
+        undim();
+        restartDim();
         dropHeld();
         closeDialog(false);
         lastKey = null;
@@ -188,24 +212,47 @@ final class WiiHome {
         closeDialog(true);
     }
 
-    // ---- apps ------------------------------------------------------------------------------------
+    // ---- Screen Burn-in Reduction ----------------------------------------------------------------
 
-    private List<String> defaultKeys() {
-        List<String> keys = new ArrayList<>();
-        for (int i = 0; i < apps.appCount(); i++) keys.add(apps.keyAt(i));
-        return keys;
-    }
-
-    private boolean installed(String key) {
-        ComponentName cn = ComponentName.unflattenFromString(key);
-        if (cn == null) return false;
-        try {
-            act.getPackageManager().getPackageInfo(cn.getPackageName(), 0);
+    /**
+     * Every key comes here first (MainActivity.dispatchKeyEvent). While the veil is up, a key only lifts it: that
+     * key, its repeats and its key-up go no further. Any other key restarts the wait. True when the key is used up.
+     */
+    boolean onKey(KeyEvent event) {
+        int code = event.getKeyCode();
+        if (veil.isOn()) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                wakeKey = code;
+                undim();
+                restartDim();
+            }
             return true;
-        } catch (PackageManager.NameNotFoundException e) {
-            return false;
         }
+        if (code == wakeKey && !(event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0)) {
+            if (event.getAction() == KeyEvent.ACTION_UP) wakeKey = KeyEvent.KEYCODE_UNKNOWN;
+            return true;
+        }
+        wakeKey = KeyEvent.KEYCODE_UNKNOWN;
+        restartDim();
+        return false;
     }
+
+    private void restartDim() {
+        handler.removeCallbacks(dimTask);
+        if (dimMs > 0 && resumed) handler.postDelayed(dimTask, dimMs);
+    }
+
+    private void dim() {
+        if (!resumed || veil.isOn()) return;
+        veil.start(root.isDark());
+    }
+
+    private void undim() {
+        handler.removeCallbacks(dimTask);
+        veil.stop();
+    }
+
+    // ---- apps ------------------------------------------------------------------------------------
 
     private void reload() {
         if (holding()) {
@@ -215,13 +262,9 @@ final class WiiHome {
         View focused = frame.findFocus();
         int focusedSlot = strip.tiles.indexOf(focused);
         if (focusedSlot >= 0 && focusedSlot < layout.size() && layout.get(focusedSlot) != null) lastKey = layout.get(focusedSlot);
-        final List<ResolveInfo> leanback = act.getPackageManager().queryIntentActivities(
-                new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER), 0);
-        apps.reload(Collections.<Cards.Card>emptyList(), leanback);
+        WiiMenu.reload(act, apps);
         dirty = false;
-        List<String> saved = WiiLayout.load(act);
-        layout = WiiLayout.arrange(defaultKeys(), saved, this::installed);
-        if (saved != null && !layout.equals(saved)) WiiLayout.save(act, layout);
+        layout = WiiMenu.layout(act, apps, true);
         int at = lastKey == null ? -1 : layout.indexOf(lastKey);
         bindStrip(layout);
         if (at >= 0) showColumn(at / ROWS, false);
@@ -258,6 +301,11 @@ final class WiiHome {
         tile.setOnClickListener(v -> {
             lastKey = key;
             if (sounds != null) sounds.confirm();
+            // The screensaver channel is ours. Open it in this task so BACK returns to the menu.
+            if (ScreensaverActivity.class.getName().equals(e.component.getClassName())) {
+                act.startActivity(new Intent(act, ScreensaverActivity.class));
+                return;
+            }
             apps.launch(e);
         });
         tile.setOnLongClickListener(v -> pickUp(slot));
@@ -361,11 +409,24 @@ final class WiiHome {
         else arrow.setAlpha(alpha);
     }
 
+    /** Every minute (TIME_TICK), and on start and resume: the clock, the date, and dark or light (WiiTime). */
     private void updateClock() {
         Calendar now = Calendar.getInstance();
         root.clock.setTime(now.get(Calendar.HOUR_OF_DAY), now.get(Calendar.MINUTE), DateFormat.is24HourFormat(act));
-        root.date.setText(DAYS[now.get(Calendar.DAY_OF_WEEK) - 1] + " " + now.get(Calendar.DAY_OF_MONTH)
-                + "/" + (now.get(Calendar.MONTH) + 1));
+        root.date.setText(WiiTime.date(now.get(Calendar.DAY_OF_WEEK), now.get(Calendar.DAY_OF_MONTH),
+                now.get(Calendar.MONTH) + 1));
+        setNight(WiiTime.isNightNow());
+    }
+
+    /** Re-colours the whole Wii screen live when the look flips; an open Entradas dialog is rebuilt in the new colours. */
+    private void setNight(boolean dark) {
+        if (root.isDark() == dark) return;
+        root.setDark(dark);
+        veil.setNight(dark);
+        if (dialog != null) {
+            closeDialog(false);
+            showEntradas();
+        }
     }
 
     // ---- scrolling -------------------------------------------------------------------------------
@@ -423,7 +484,7 @@ final class WiiHome {
 
     private View nearestControl(float x) {
         View best = root.os;
-        for (View c : new View[] {root.sd, root.mail}) {
+        for (View c : new View[] {root.sd, root.inputs}) {
             if (Math.abs(centerX(c) - x) < Math.abs(centerX(best) - x)) best = c;
         }
         return best;
@@ -497,11 +558,11 @@ final class WiiHome {
         switch (keyCode) {
             case KeyEvent.KEYCODE_DPAD_LEFT:
                 if (v == root.sd) root.os.requestFocus();
-                else if (v == root.mail) root.sd.requestFocus();
+                else if (v == root.inputs) root.sd.requestFocus();
                 return true;
             case KeyEvent.KEYCODE_DPAD_RIGHT:
                 if (v == root.os) root.sd.requestFocus();
-                else if (v == root.sd) root.mail.requestFocus();
+                else if (v == root.sd) root.inputs.requestFocus();
                 return true;
             case KeyEvent.KEYCODE_DPAD_UP:
                 upFromBar(v);
@@ -525,7 +586,7 @@ final class WiiHome {
         };
         root.os.setOnKeyListener(bar);
         root.sd.setOnKeyListener(bar);
-        root.mail.setOnKeyListener(bar);
+        root.inputs.setOnKeyListener(bar);
         root.os.setOnClickListener(v -> {
             confirmSound();
             act.open(act.systemIntent(android.provider.Settings.ACTION_SETTINGS));
@@ -538,7 +599,7 @@ final class WiiHome {
             confirmSound();
             openFileManager();
         });
-        root.mail.setOnClickListener(v -> {
+        root.inputs.setOnClickListener(v -> {
             confirmSound();
             showEntradas();
         });
@@ -712,15 +773,16 @@ final class WiiHome {
         final Intent live = liveTv();
 
         dialog = new FrameLayout(act);
-        dialog.setBackgroundColor(0x78F2F4F6);
+        WiiViews.Palette pal = root.look.p;
+        dialog.setBackgroundColor(pal.scrim);
         dialog.setOnClickListener(v -> closeDialog(true));
         LinearLayout panel = new LinearLayout(act);
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setClickable(true);
         GradientDrawable glass = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[] {0xE6FFFFFF, 0xD9E4E8EB});
+                new int[] {pal.panelTop, pal.panelBottom});
         glass.setCornerRadius(34 * u);
-        glass.setStroke(Math.max(2, Math.round(3 * u)), 0xFFB3D5E6);
+        glass.setStroke(Math.max(2, Math.round(3 * u)), pal.panelEdge);
         panel.setBackground(glass);
         int pad = (int) (30 * u);
         panel.setPadding(pad, (int) (22 * u), pad, pad);
@@ -728,7 +790,7 @@ final class WiiHome {
         title.setText(R.string.inputs);
         title.setTypeface(root.font);
         title.getPaint().setFakeBoldText(true);
-        title.setTextColor(WiiViews.GRAY_TEXT);
+        title.setTextColor(pal.text);
         title.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, 44 * u);
         title.setGravity(Gravity.CENTER);
         title.setPadding(0, 0, 0, (int) (10 * u));
@@ -764,7 +826,7 @@ final class WiiHome {
     }
 
     private WiiViews.Pill pill(LinearLayout panel, String text, final Runnable action) {
-        WiiViews.Pill p = new WiiViews.Pill(act, u, root.font);
+        WiiViews.Pill p = new WiiViews.Pill(act, u, root.font, root.look);
         p.setText(text);
         p.setOnClickListener(v -> {
             confirmSound();
@@ -781,6 +843,6 @@ final class WiiHome {
         frame.removeView(dialog);
         dialog = null;
         root.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
-        if (refocus) root.mail.requestFocus();
+        if (refocus) root.inputs.requestFocus();
     }
 }

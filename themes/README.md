@@ -28,6 +28,7 @@ is ignored, and a file that doesn't parse is ignored as a whole, so a theme can 
 
 | Key | Type | Meaning |
 |---|---|---|
+| `wii_music` | bool | Soft background music (an original loop) while the Wii menu is in front; it fades out for apps, other apps' dialogs, the screensaver and screen off. The launcher's own Settings screen can override it on the TV. Built-in default is `true` |
 | `wii_style` | bool | The Wii menu home instead of the dock layout: 12 channel tiles a page (4 columns, 3 rows), a curved bar with a clock, a wiiOS button (Settings; long-press opens Launcher settings), an SD button (opens the File Manager if installed) and an Entradas button for the HDMI inputs and Live TV. Most other layout keys do not apply; `hidden_apps`, `live_tv_package` and `app_labels` do. Built-in default is `true`; the `default/` theme turns it off |
 | `dock_apps` | list of package names | The dock row, in order; missing apps are skipped |
 | `fill_dock` | bool | Fill the dock slots `dock_apps` leaves free with the first grid apps (true by default); false leaves them empty |

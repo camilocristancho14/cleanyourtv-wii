@@ -25,6 +25,7 @@
     <string name="stats_memory">Memory %1$d MB free</string>
     <string name="stats_storage">Storage %1$s free</string>
     <string name="dream_name">Clock</string>
+    <string name="dream_wii_name" translatable="false">Video</string>
     <string name="vpn">VPN</string>
     <string name="vpn_off">VPN off</string>
     <string name="home_settings">Choose default home</string>
@@ -40,6 +41,7 @@
     <string name="animations_state">Animations: %1$s</string>
     <string name="advanced_effects">Advanced effects</string>
     <string name="advanced_effects_state">Advanced effects: %1$s</string>
+    <string name="wii_music_state">Wii menu music: %1$s</string>
     <string name="advanced_effects_warning">Adds a lifted tile, icon zoom and smooth colour transitions. May increase memory use; the actual difference depends on your TV.</string>
     <string name="follow_theme">Follow theme (reset on-TV choices)</string>
     <string name="follow_theme_hint">Uses the current theme or built-in layout and motion settings. Pushing or resetting a theme also clears your on-TV choices.</string>
@@ -107,4 +109,16 @@
     <!-- Cinematic top shelf (cinematic_home): the line under the focused dock app's name; %1$s is when it was
          last opened, e.g. "5 minutes ago" or "yesterday, 9:40 pm". -->
     <string name="last_opened">Last opened %1$s</string>
+    <!-- Alexa bridge (docs/alexa-bridge.md): the low-priority notification that keeps the service alive. -->
+    <string name="alexa_bridge_name">Alexa bridge</string>
+
+    <!-- Wii channel "Protector de pantalla". Spanish on every locale: the screen itself is Spanish. -->
+    <string name="screensaver_channel" translatable="false">Protector de pantalla</string>
+    <string name="screensaver_enabled" translatable="false">Protector de pantalla activado</string>
+    <string name="screensaver_on" translatable="false">Activado</string>
+    <string name="screensaver_off" translatable="false">Desactivado</string>
+    <string name="screensaver_black" translatable="false">Pantalla negra</string>
+    <string name="screensaver_preview" translatable="false">Ver ahora</string>
+    <string name="screensaver_pick" translatable="false">Elige un video</string>
+    <string name="screensaver_empty" translatable="false">No hay videos .mp4 en screensavers</string>
 </resources>

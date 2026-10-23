@@ -12,5 +12,10 @@ backup/
 # Generated install bundles and JVM crash reports stay out of contributions.
 *.apk
 *.aab
+# Screensaver video (push screensaver.mp4 to the TV). Never commit media.
+*.mp4
 launcher/hs_err_pid*.log
 launcher/replay_pid*.log
+
+# Alexa bridge config (ntfy topics and HMAC secret): never commit
+alexa.properties
